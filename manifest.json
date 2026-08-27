@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "简历领航 Resume Pilot",
+  "version": "0.1.0",
+  "description": "根据求职偏好寻找企业官网招聘入口，并在用户确认后辅助填写申请表。",
+  "permissions": ["storage", "tabs", "activeTab"],
+  "host_permissions": ["https://www.bing.com/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "简历领航",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle"
+    }
+  ]
+}
