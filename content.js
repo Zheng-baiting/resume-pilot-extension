@@ -28,8 +28,6 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
 function scanJobList(profile) {
   const roleTerms = splitTerms(profile.targetRole);
-  const skillTerms = splitTerms(profile.skills);
-  const city = String(profile.targetCity || "").trim();
   const positionType = String(profile.positionType || "").trim();
   const company = inferPageCompany();
   const seen = new Set();
@@ -43,26 +41,26 @@ function scanJobList(profile) {
     const text = String(card?.innerText || link.innerText || link.getAttribute("aria-label") || "").replace(/\s+/g, " ").trim();
     if (text.length < 4 || text.length > 1000 || !looksLikeJob(text, url, roleTerms, positionType)) continue;
 
-    const lower = `${text} ${url}`.toLowerCase();
-    const matchedRoles = roleTerms.filter((term) => lower.includes(term.toLowerCase()));
-    const matchedSkills = skillTerms.filter((term) => lower.includes(term.toLowerCase()));
-    const reasons = [];
-    let score = 25;
-    if (matchedRoles.length) { score += Math.min(30, matchedRoles.length * 12); reasons.push(`岗位词：${matchedRoles.slice(0, 3).join("、")}`); }
-    if (city && lower.includes(city.toLowerCase())) { score += 15; reasons.push(`地点：${city}`); }
-    if (matchedSkills.length) { score += Math.min(18, matchedSkills.length * 5); reasons.push(`技能：${matchedSkills.slice(0, 3).join("、")}`); }
-    if (positionType && positionType !== "不限" && lower.includes(positionType.toLowerCase())) { score += 12; reasons.push(positionType); }
-    if (/(职位|岗位|position|job|career)/i.test(url)) { score += 5; reasons.push("岗位链接"); }
+    const companyEval = ResumePilotScoring.evaluateCompany(`${document.title} ${text}`, url, profile);
+    const jobEval = ResumePilotScoring.evaluateJob(text, url, profile);
+    const score = Math.round(companyEval.companyScore * 0.3 + jobEval.jobScore * 0.45 + jobEval.compensationScore * 0.25);
 
     seen.add(url);
     candidates.push({
       title: extractJobTitle(link, card, text),
       url,
       description: text.slice(0, 260),
-      company,
+      company: companyEval.company || company,
       resultType: "页面岗位",
-      score: Math.min(100, score),
-      reasons: [...new Set(reasons)].slice(0, 5)
+      score,
+      companyScore: companyEval.companyScore,
+      jobScore: jobEval.jobScore,
+      compensationScore: jobEval.compensationScore,
+      compensationLabel: jobEval.compensationLabel,
+      confidence: companyEval.confidence,
+      reasons: [...new Set([...companyEval.reasons, ...jobEval.reasons])].slice(0, 6),
+      warnings: [...new Set([...companyEval.warnings, ...jobEval.warnings])].slice(0, 6),
+      evidence: companyEval.evidence
     });
   }
 

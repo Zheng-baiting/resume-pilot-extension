@@ -51,10 +51,26 @@
         </div>
         <label>求职类型<select id="positionType"><option>实习</option><option>校园招聘</option><option>不限</option></select></label>
         <label>目标行业<input id="targetIndustry" placeholder="互联网、人工智能" /></label>
+        <div class="grid">
+          <label>最低期望日薪（元）<input id="minDailySalary" inputmode="numeric" placeholder="200" /></label>
+          <label>最低期望月薪（k）<input id="minMonthlySalary" inputmode="decimal" placeholder="12" /></label>
+        </div>
+        <label>企业侧重点<select id="qualityFocus"><option value="balanced">综合均衡</option><option value="stability">稳定与公开披露优先</option><option value="growth">成长与创新优先</option><option value="student">学生培养优先</option></select></label>
+        <details class="advanced">
+          <summary>到岗能力与排除条件</summary>
+          <div class="grid inner-grid">
+            <label>每周可到岗<input id="availableDays" inputmode="numeric" placeholder="5" /></label>
+            <label>可实习月数<input id="internshipMonths" inputmode="numeric" placeholder="3" /></label>
+            <label>可接受经验要求<input id="maxExperienceYears" inputmode="numeric" value="0" /></label>
+            <label>最低岗位匹配分<input id="minJobFit" inputmode="numeric" value="45" /></label>
+          </div>
+          <label>排除岗位关键词<input id="avoidJobKeywords" placeholder="销售、外包、劳务派遣、夜班" /></label>
+          <label>排除企业关键词<input id="avoidCompanyKeywords" placeholder="外包、劳务派遣" /></label>
+        </details>
         <label>优先企业（可选）<textarea id="preferredCompanies" rows="3" placeholder="腾讯、字节跳动、华为；不填则按条件搜索"></textarea></label>
         <button id="searchCompanies" class="primary full">自动寻找合适企业与岗位</button>
         <button id="scanJobs" class="secondary full spaced">分析当前官网的岗位列表</button>
-        <div class="search-hint">优先展示具体岗位，并按官网可信度、岗位、地点、技能与学生招聘类型计算匹配分。</div>
+        <div class="search-hint">综合排序：企业质量 30% + 岗位匹配 45% + 待遇 25%。未公开薪资不会被默认视为高待遇。</div>
         <div id="searchStatus" class="status" role="status"></div>
         <div id="results" class="results"></div>
       </section>

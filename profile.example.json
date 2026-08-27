@@ -12,5 +12,14 @@
   "targetCity": "上海",
   "targetIndustry": "互联网、人工智能",
   "positionType": "实习",
+  "qualityFocus": "balanced",
+  "availableDays": "5",
+  "internshipMonths": "3",
+  "maxExperienceYears": "0",
+  "minJobFit": "45",
+  "minDailySalary": "200",
+  "minMonthlySalary": "12",
+  "avoidJobKeywords": "销售、外包、劳务派遣、夜班",
+  "avoidCompanyKeywords": "外包、劳务派遣",
   "preferredCompanies": "腾讯、字节跳动、华为"
 }

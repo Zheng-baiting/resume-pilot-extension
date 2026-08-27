@@ -1,7 +1,9 @@
 const PROFILE_FIELDS = [
   "resumeText", "fullName", "phone", "email", "school", "major", "degree",
   "graduationYear", "currentCity", "skills", "targetRole", "targetCity",
-  "targetIndustry", "positionType", "preferredCompanies"
+  "targetIndustry", "positionType", "preferredCompanies", "qualityFocus",
+  "availableDays", "internshipMonths", "maxExperienceYears", "minJobFit",
+  "minDailySalary", "minMonthlySalary", "avoidJobKeywords", "avoidCompanyKeywords"
 ];
 
 document.addEventListener("DOMContentLoaded", async () => {
@@ -105,14 +107,24 @@ async function searchCompanies() {
         industry: profile.targetIndustry,
         positionType: profile.positionType,
         skills: profile.skills,
-        preferredCompanies: profile.preferredCompanies
+        preferredCompanies: profile.preferredCompanies,
+        qualityFocus: profile.qualityFocus,
+        graduationYear: profile.graduationYear,
+        degree: profile.degree,
+        availableDays: profile.availableDays,
+        internshipMonths: profile.internshipMonths,
+        maxExperienceYears: profile.maxExperienceYears,
+        minDailySalary: profile.minDailySalary,
+        minMonthlySalary: profile.minMonthlySalary,
+        avoidJobKeywords: profile.avoidJobKeywords,
+        avoidCompanyKeywords: profile.avoidCompanyKeywords
       }
     });
     if (!response?.ok) throw new Error(response?.error || "搜索失败");
-    renderResults(response.results);
+    renderResults(filterResults(response.results, profile));
     status.className = "status success";
     status.textContent = response.results.length
-      ? `找到 ${response.results.length} 个候选入口，请核对域名后打开。`
+      ? `找到 ${response.results.length} 个候选入口，已按企业、岗位与待遇综合排序。`
       : "没有找到合适结果，请换一组条件。";
   } catch (error) {
     status.className = "status error";
@@ -132,10 +144,13 @@ function renderResults(items) {
     link.target = "_blank";
     link.rel = "noreferrer";
     link.textContent = item.title || item.url;
-    const badge = document.createElement("span");
-    badge.className = "result-badge";
-    badge.textContent = `${item.resultType || "候选"} · ${item.score}%`;
-    titleRow.append(link, badge);
+    const badges = document.createElement("div");
+    badges.className = "result-badges";
+    const companyBadge = makeBadge(`企业 ${item.companyScore ?? "?"}`);
+    const jobBadge = makeBadge(`匹配 ${item.jobScore ?? item.score ?? "?"}`);
+    const payBadge = makeBadge(`待遇 ${item.compensationScore ?? "?"}`, "pay");
+    badges.append(companyBadge, jobBadge, payBadge);
+    titleRow.append(link, badges);
     const description = document.createElement("p");
     description.textContent = item.description;
     const meta = document.createElement("div");
@@ -143,10 +158,45 @@ function renderResults(items) {
     meta.textContent = `${item.company || "待核验企业"} · ${safeHost(item.url)}`;
     const reasons = document.createElement("div");
     reasons.className = "result-reasons";
+    const pay = document.createElement("div");
+    pay.className = "result-reasons";
+    pay.textContent = `待遇判断：${item.compensationLabel || "未获取"}`;
     reasons.textContent = item.reasons?.length ? `推荐依据：${item.reasons.join(" · ")}` : "推荐依据不足，请人工核验";
-    card.append(titleRow, description, reasons, meta);
+    card.append(titleRow, description, pay, reasons, meta);
+    if (item.warnings?.length) {
+      const warning = document.createElement("div");
+      warning.className = "result-warning";
+      warning.textContent = `需核验：${item.warnings.join(" · ")}`;
+      card.append(warning);
+    }
+    if (item.evidence?.length) {
+      const evidence = document.createElement("div");
+      evidence.className = "result-evidence";
+      evidence.append("企业证据：");
+      for (const source of item.evidence) {
+        const sourceLink = document.createElement("a");
+        sourceLink.href = source.url;
+        sourceLink.target = "_blank";
+        sourceLink.rel = "noreferrer";
+        sourceLink.textContent = source.label;
+        evidence.append(sourceLink);
+      }
+      card.append(evidence);
+    }
     container.append(card);
   }
+}
+
+function makeBadge(text, extraClass = "") {
+  const badge = document.createElement("span");
+  badge.className = `result-badge ${extraClass}`.trim();
+  badge.textContent = text;
+  return badge;
+}
+
+function filterResults(items, profile) {
+  const minimum = Number(profile.minJobFit || 0);
+  return items.filter((item) => item.resultType === "招聘入口" || (item.jobScore ?? item.score ?? 0) >= minimum);
 }
 
 async function scanCurrentJobs() {
@@ -161,7 +211,8 @@ async function scanCurrentJobs() {
     if (!tab?.id || !/^https?:/i.test(tab.url || "")) throw new Error("请先打开企业官网的岗位列表页");
     const response = await chrome.tabs.sendMessage(tab.id, { type: "SCAN_JOB_LIST", profile: collectProfile() });
     if (!response?.ok) throw new Error(response?.error || "岗位分析失败");
-    renderResults(response.results);
+    const profile = collectProfile();
+    renderResults(filterResults(response.results, profile));
     status.className = "status success";
     status.textContent = response.results.length
       ? `在当前页面找到 ${response.results.length} 个候选岗位，已按匹配度排序。`
