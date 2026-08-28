@@ -350,7 +350,11 @@ async function autoScanStage(tabId) {
     autopilotState.lastMessage = `已选择：${candidates[0].title}`;
     await persistAutopilot();
     if (candidates[0].clickToken) {
-      const opened = await sendTabMessage(tabId, { type: "OPEN_SCANNED_JOB", clickToken: candidates[0].clickToken });
+      const opened = await sendTabMessage(tabId, {
+        type: "OPEN_SCANNED_JOB",
+        clickToken: candidates[0].clickToken,
+        searchTerm: candidates[0].officialSearchTerm || ""
+      });
       if (!opened.clicked) throw new Error("无法打开动态岗位卡片");
       scheduleAutoStep(tabId, 1800);
     } else {
@@ -501,7 +505,11 @@ async function openManualJob(tabId, item) {
   if (item.sourceUrl && canonicalTabUrl(tab.url) !== canonicalTabUrl(item.sourceUrl)) {
     throw new Error("请回到刚才扫描的岗位列表页后再打开此岗位");
   }
-  return sendTabMessage(tabId, { type: "OPEN_SCANNED_JOB", clickToken: item.clickToken });
+  return sendTabMessage(tabId, {
+    type: "OPEN_SCANNED_JOB",
+    clickToken: item.clickToken,
+    searchTerm: item.officialSearchTerm || ""
+  });
 }
 
 function canonicalTabUrl(value) {

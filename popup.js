@@ -155,9 +155,12 @@ async function restoreLatestScan() {
   const profile = collectProfile();
   renderedUrls.clear();
   document.getElementById("results").replaceChildren();
-  renderResults(filterResults(latestManualScan.results, profile));
+  const display = displayScannedResults(latestManualScan.results, profile);
+  renderResults(display.items);
   document.getElementById("searchStatus").className = "status success";
-  document.getElementById("searchStatus").textContent = `自动进入岗位页后找到 ${latestManualScan.results.length} 个岗位。`;
+  document.getElementById("searchStatus").textContent = display.usedFallback
+    ? `官网找到 ${latestManualScan.results.length} 个岗位，但没有达到当前最低匹配分；已显示最接近的候选。`
+    : `自动进入岗位页后找到 ${latestManualScan.results.length} 个岗位。`;
 }
 
 async function startAutopilot() {
@@ -388,6 +391,12 @@ function filterResults(items, profile) {
   return items.filter((item) => ["招聘入口", "岗位列表"].includes(item.resultType) || (item.jobScore ?? item.score ?? 0) >= minimum);
 }
 
+function displayScannedResults(items, profile) {
+  const matched = filterResults(items, profile);
+  if (matched.length || !items.length) return { items: matched, usedFallback: false };
+  return { items: [...items].sort((a, b) => (b.score || 0) - (a.score || 0)).slice(0, 12), usedFallback: true };
+}
+
 async function scanCurrentJobs() {
   await saveProfile();
   const status = document.getElementById("searchStatus");
@@ -419,10 +428,13 @@ async function scanCurrentJobs() {
       return;
     }
     const profile = collectProfile();
-    renderResults(filterResults(response.results, profile));
+    const display = displayScannedResults(response.results, profile);
+    renderResults(display.items);
     status.className = "status success";
     status.textContent = response.results.length
-      ? `在当前页面找到 ${response.results.length} 个候选岗位，已按匹配度排序。`
+      ? (display.usedFallback
+        ? `官网共找到 ${response.results.length} 个岗位，但没有达到最低匹配分；已显示最接近的 ${display.items.length} 个，不再留空。`
+        : `官网筛选并翻页后找到 ${response.results.length} 个候选岗位，已按匹配度排序。`)
       : "当前页面没有识别到岗位链接；可调整官网筛选条件或向下滚动加载更多岗位后再试。";
   } catch (error) {
     status.className = "status error";

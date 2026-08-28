@@ -23,7 +23,7 @@ async function handleMessage(message) {
     return fillApplication(message.profile || {}, knownAnswers, message.resumeFile || null);
   }
   if (message?.type === "SCAN_JOB_LIST") return deepScanJobList(message.profile || {});
-  if (message?.type === "OPEN_SCANNED_JOB") return openScannedJob(message.clickToken || "");
+  if (message?.type === "OPEN_SCANNED_JOB") return openScannedJob(message.clickToken || "", message.searchTerm || "");
   if (message?.type === "CLICK_JOB_ENTRANCE") return clickJobEntrance(message.index || 0);
   if (message?.type === "OPEN_APPLICATION") return openApplication();
   if (message?.type === "SUBMIT_APPLICATION") return submitApplication();
@@ -37,25 +37,168 @@ async function handleMessage(message) {
 
 async function deepScanJobList(profile) {
   const collected = new Map();
-  let unchangedRounds = 0;
-  let lastHeight = 0;
+  await selectOfficialPositionType(profile);
+  const searchInput = findOfficialSearchInput();
+  const searchTerms = searchInput ? buildOfficialSearchTerms(profile).slice(0, 3) : [];
 
-  for (let round = 0; round < 6; round += 1) {
-    for (const item of scanJobList(profile)) collected.set(item.url, item);
-    const height = document.documentElement.scrollHeight;
-    if (height === lastHeight) unchangedRounds += 1;
-    else unchangedRounds = 0;
-    lastHeight = height;
-    if (collected.size >= 60 || unchangedRounds >= 2) break;
-    window.scrollTo({ top: Math.min(height, window.scrollY + Math.max(window.innerHeight * 0.85, 650)), behavior: "instant" });
-    await wait(650);
+  if (searchTerms.length) {
+    for (const term of searchTerms) {
+      await runOfficialKeywordSearch(searchInput, term);
+      await collectOfficialJobPages(profile, collected);
+      if (collected.size >= 30) break;
+    }
+    // 官网关键词过严时自动清空，完整翻页后再由扩展评分，不能直接判定“无岗位”。
+    if (!collected.size) {
+      await runOfficialKeywordSearch(searchInput, "");
+      await collectOfficialJobPages(profile, collected);
+    }
+  } else {
+    if (searchInput && searchInput.value.trim()) await runOfficialKeywordSearch(searchInput, "");
+    await collectOfficialJobPages(profile, collected);
   }
 
   return {
-    results: [...collected.values()].sort((a, b) => b.score - a.score).slice(0, 60),
+    results: [...collected.values()].sort((a, b) => b.score - a.score).slice(0, 80),
     entrances: discoverJobEntrances(),
-    recommendedUrl: getRecommendedJobListUrl(profile)
+    recommendedUrl: getRecommendedJobListUrl(profile),
+    officialFilters: {
+      positionType: String(profile.positionType || ""),
+      keywords: searchTerms
+    }
   };
+}
+
+async function collectOfficialJobPages(profile, collected) {
+  if (pagerItems().length > 1 && currentJobPageNumber() !== 1) await clickJobPageNumber(1);
+  // 同时支持无限滚动和传统分页。最多读取 8 页/80 个岗位，避免异常页面无限循环。
+  for (let pageRound = 0; pageRound < 8; pageRound += 1) {
+    let unchangedRounds = 0;
+    let lastHeight = 0;
+    for (let scrollRound = 0; scrollRound < 6; scrollRound += 1) {
+      for (const item of scanJobList(profile)) collected.set(item.url, item);
+      const height = document.documentElement.scrollHeight;
+      if (height === lastHeight) unchangedRounds += 1;
+      else unchangedRounds = 0;
+      lastHeight = height;
+      if (collected.size >= 80 || unchangedRounds >= 2) break;
+      window.scrollTo({ top: Math.min(height, window.scrollY + Math.max(window.innerHeight * 0.85, 650)), behavior: "instant" });
+      await wait(500);
+    }
+    if (collected.size >= 80 || !(await moveToNextJobPage())) break;
+  }
+}
+
+async function selectOfficialPositionType(profile) {
+  const desired = /实习|intern/i.test(profile.positionType || "")
+    ? /^(实习生|实习|interns?)$/i
+    : (/校园|校招|应届|graduate|campus/i.test(profile.positionType || "") ? /^(应届生|校园招聘|校招|graduate|campus)$/i : null);
+  if (!desired) return false;
+  const control = [...document.querySelectorAll("label[role='radio'], [role='radio'], button, label")]
+    .find((element) => isVisible(element) && desired.test(String(element.innerText || element.textContent || "").replace(/\s+/g, " ").trim()));
+  if (!control || control.getAttribute("aria-checked") === "true" || control.classList.contains("is-active")) return false;
+  const before = jobPageSignature();
+  control.click();
+  await waitForJobListChange(before);
+  return true;
+}
+
+function findOfficialSearchInput() {
+  return [...document.querySelectorAll("input:not([type]), input[type='text'], input[type='search']")]
+    .find((input) => {
+      if (!isVisible(input)) return false;
+      const descriptor = `${input.placeholder || ""} ${input.getAttribute("aria-label") || ""} ${input.name || ""}`;
+      return /(搜索|关键字|关键词|职位|岗位|search|keyword|job|position)/i.test(descriptor);
+    }) || null;
+}
+
+function buildOfficialSearchTerms(profile) {
+  const raw = String(profile.targetRole || "").replace(/(实习生?|校园招聘|校招|应届生?)/gi, " ").replace(/\s+/g, " ").trim();
+  if (!raw) return [];
+  const terms = splitTerms(raw).slice(0, 3);
+  if (/前端|后端|全栈|客户端|java|javascript|软件/i.test(raw)) terms.push("软件开发工程师");
+  if (/算法|机器学习|深度学习|ai|人工智能|大模型/i.test(raw)) terms.push("AI模型工程师", "算法工程师");
+  if (/数据|分析/i.test(raw)) terms.push("数据工程师");
+  return [...new Set([raw, ...terms].map((term) => term.trim()).filter((term) => term.length > 1))];
+}
+
+async function runOfficialKeywordSearch(input, term) {
+  if (!input) return false;
+  const before = jobPageSignature();
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+  setter ? setter.call(input, term) : (input.value = term);
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+  input.dispatchEvent(new Event("change", { bubbles: true }));
+  const container = input.closest("form, [class*='search'], [class*='filter']") || input.parentElement?.parentElement;
+  const searchButton = [...(container || document).querySelectorAll("button, [role='button']")]
+    .find((element) => isVisible(element) && /^(搜索|查询|查找|search)$/i.test(String(element.innerText || element.textContent || element.getAttribute("aria-label") || "").trim()));
+  if (searchButton) searchButton.click();
+  else input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", bubbles: true }));
+  await waitForJobListChange(before);
+  return true;
+}
+
+async function waitForJobListChange(before) {
+  for (let attempt = 0; attempt < 16; attempt += 1) {
+    await wait(250);
+    const after = jobPageSignature();
+    if (after !== before) return true;
+  }
+  return false;
+}
+
+function findPagerContainer() {
+  const specific = document.querySelector(".aui-pager, .pagination, [class*='pagination']");
+  if (specific) return specific;
+  return [...document.querySelectorAll("[class*='pager']")].find((element) =>
+    [...element.querySelectorAll("li, button, a, [role='button']")]
+      .filter((item) => /^\d+$/.test(String(item.innerText || item.textContent || "").trim())).length >= 2
+  ) || null;
+}
+
+function pagerItems() {
+  const container = findPagerContainer();
+  if (!container) return [];
+  return [...container.querySelectorAll("li, button, a, [role='button']")]
+    .filter(isVisible)
+    .map((element) => ({ element, text: String(element.innerText || element.textContent || "").trim() }))
+    .filter((item) => /^\d+$/.test(item.text));
+}
+
+function currentJobPageNumber() {
+  const items = pagerItems();
+  const current = items.find(({ element }) =>
+    element.getAttribute("aria-current") === "page" || /(^|\s)is-active(\s|$)|(^|[-_])current($|[-_])|(^|[-_])selected($|[-_])/i.test(String(element.className || ""))
+  );
+  return Number(current?.text || items[0]?.text || 1);
+}
+
+function jobPageSignature() {
+  return findClickableJobCards().slice(0, 3).map((card) => normalizeClickSignature(extractCardJobTitle(card, card.innerText || ""))).join("|") ||
+    [...document.querySelectorAll("a[href]")].filter(isVisible).slice(0, 8).map((link) => `${link.href}|${link.innerText}`).join("|");
+}
+
+async function clickJobPageNumber(number) {
+  const target = pagerItems().find((item) => Number(item.text) === number)?.element;
+  if (!target) return false;
+  const before = jobPageSignature();
+  target.click();
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    await wait(250);
+    const after = jobPageSignature();
+    if (after && after !== before) {
+      window.scrollTo({ top: 0, behavior: "instant" });
+      return true;
+    }
+  }
+  return false;
+}
+
+async function moveToNextJobPage() {
+  const items = pagerItems();
+  if (items.length < 2) return false;
+  const current = currentJobPageNumber();
+  const next = items.map((item) => Number(item.text)).filter((number) => number > current).sort((a, b) => a - b)[0];
+  return next ? clickJobPageNumber(next) : false;
 }
 
 function getRecommendedJobListUrl(profile) {
@@ -198,6 +341,7 @@ function scanJobList(profile) {
       sourceUrl: canonicalPageUrl(location.href),
       clickToken: signature,
       clickIndex: index,
+      officialSearchTerm: findOfficialSearchInput()?.value || "",
       description: text.slice(0, 260),
       company: companyEval.company || company,
       resultType: "点击式岗位",
@@ -237,9 +381,19 @@ function normalizeClickSignature(value) {
   return String(value || "").toLowerCase().replace(/[\s|｜·—_\-（）()【】\[\]，,。.:：;/\\]/g, "").slice(0, 80);
 }
 
-async function openScannedJob(clickToken) {
-  const cards = findClickableJobCards();
-  const target = cards.find((card) => normalizeClickSignature(extractCardJobTitle(card, card.innerText || "")) === clickToken);
+async function openScannedJob(clickToken, searchTerm = "") {
+  const searchInput = findOfficialSearchInput();
+  if (searchInput && searchInput.value !== searchTerm) await runOfficialKeywordSearch(searchInput, searchTerm);
+  let cards = findClickableJobCards();
+  let target = cards.find((card) => normalizeClickSignature(extractCardJobTitle(card, card.innerText || "")) === clickToken);
+  if (!target && pagerItems().length > 1) {
+    if (currentJobPageNumber() !== 1) await clickJobPageNumber(1);
+    for (let attempt = 0; attempt < 8 && !target; attempt += 1) {
+      cards = findClickableJobCards();
+      target = cards.find((card) => normalizeClickSignature(extractCardJobTitle(card, card.innerText || "")) === clickToken);
+      if (!target && !(await moveToNextJobPage())) break;
+    }
+  }
   if (!target) throw new Error("岗位列表已变化，请重新扫描");
   const beforeUrl = location.href;
   target.scrollIntoView({ block: "center", behavior: "instant" });

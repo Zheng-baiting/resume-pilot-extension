@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "简历领航 Resume Pilot",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "持续发现企业官网岗位，按简历与待遇排序，并支持带异常策略的自动投递队列。",
   "permissions": ["storage", "tabs", "activeTab"],
   "host_permissions": ["https://www.bing.com/*"],
