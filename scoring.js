@@ -3,8 +3,9 @@
     {
       company: "腾讯",
       aliases: ["Tencent"],
-      domains: ["jobs.tencent.com", "careers.tencent.com"],
+      domains: ["jobs.tencent.com", "careers.tencent.com", "join.qq.com"],
       careerUrl: "https://jobs.tencent.com/",
+      jobListUrls: { campus: "https://join.qq.com/", intern: "https://join.qq.com/" },
       tags: ["互联网", "游戏", "云计算", "人工智能"],
       dimensions: { stability: 90, growth: 82, student: 88, transparency: 90 },
       evidence: [
@@ -17,6 +18,7 @@
       aliases: ["ByteDance", "抖音集团"],
       domains: ["jobs.bytedance.com"],
       careerUrl: "https://jobs.bytedance.com/campus/",
+      jobListUrls: { campus: "https://jobs.bytedance.com/campus/position", intern: "https://jobs.bytedance.com/campus/position" },
       tags: ["互联网", "人工智能", "内容", "电商"],
       dimensions: { stability: 72, growth: 92, student: 85, transparency: 66 },
       evidence: [
@@ -29,6 +31,7 @@
       aliases: ["Huawei"],
       domains: ["career.huawei.com"],
       careerUrl: "https://career.huawei.com/cn/campus-recruitment",
+      jobListUrls: { campus: "https://career.huawei.com/cn/campus-recruitment-job-list?recruitmentType=FRESH_GRADUATE", intern: "https://career.huawei.com/cn/campus-recruitment-job-list?recruitmentType=INTERN" },
       tags: ["通信", "硬件", "人工智能", "软件", "芯片"],
       dimensions: { stability: 90, growth: 91, student: 90, transparency: 91 },
       evidence: [
@@ -41,12 +44,103 @@
       aliases: ["Alibaba"],
       domains: ["campus-talent.alibaba.com", "talent.alibaba.com"],
       careerUrl: "https://campus-talent.alibaba.com/campus/position",
+      jobListUrls: { campus: "https://campus-talent.alibaba.com/campus/position", intern: "https://campus-talent.alibaba.com/campus/position" },
       tags: ["互联网", "电商", "云计算", "人工智能"],
       dimensions: { stability: 88, growth: 88, student: 92, transparency: 91 },
       evidence: [
         { label: "官方财务报告", url: "https://www.alibabagroup.com/en-US/ir-financial-reports-financial-results" },
         { label: "官方员工发展说明", url: "https://home.alibabagroup.com/en-US/esg-employee-development" }
       ]
+    },
+    {
+      company: "百度",
+      aliases: ["Baidu"],
+      domains: ["talent.baidu.com"],
+      careerUrl: "https://talent.baidu.com/jobs/campus",
+      jobListUrls: { campus: "https://talent.baidu.com/jobs/list?projectType=1", intern: "https://talent.baidu.com/jobs/list?projectType=2" },
+      tags: ["互联网", "人工智能", "搜索", "自动驾驶", "云计算"],
+      dimensions: { stability: 84, growth: 87, student: 88, transparency: 88 },
+      evidence: [{ label: "官方校园招聘与职位", url: "https://talent.baidu.com/jobs/campus" }]
+    },
+    {
+      company: "京东",
+      aliases: ["JD", "JD.com"],
+      domains: ["zhaopin.jd.com"],
+      careerUrl: "https://zhaopin.jd.com/",
+      jobListUrls: { campus: "https://zhaopin.jd.com/", intern: "https://zhaopin.jd.com/" },
+      tags: ["互联网", "电商", "物流", "零售", "人工智能"],
+      dimensions: { stability: 84, growth: 80, student: 82, transparency: 78 },
+      evidence: [{ label: "官方招聘入口", url: "https://zhaopin.jd.com/" }]
+    },
+    {
+      company: "美团",
+      aliases: ["Meituan"],
+      domains: ["job.meituan.com", "career.meituan.com"],
+      careerUrl: "https://career.meituan.com/",
+      jobListUrls: { campus: "https://job.meituan.com/web/campus", intern: "https://job.meituan.com/web/campus" },
+      tags: ["互联网", "本地生活", "零售", "人工智能", "物流"],
+      dimensions: { stability: 82, growth: 84, student: 86, transparency: 82 },
+      evidence: [{ label: "官方校园招聘入口", url: "https://job.meituan.com/web/campus" }]
+    },
+    {
+      company: "小米",
+      aliases: ["Xiaomi"],
+      domains: ["hr.xiaomi.com", "career.mi.com"],
+      careerUrl: "https://hr.xiaomi.com/campus",
+      jobListUrls: { campus: "https://hr.xiaomi.com/campus", intern: "https://hr.xiaomi.com/campus" },
+      tags: ["硬件", "互联网", "汽车", "人工智能", "芯片", "IoT"],
+      dimensions: { stability: 82, growth: 89, student: 87, transparency: 83 },
+      evidence: [{ label: "官方校园招聘入口", url: "https://hr.xiaomi.com/campus" }]
+    },
+    {
+      company: "网易",
+      aliases: ["NetEase"],
+      domains: ["campus.163.com", "hr.163.com"],
+      careerUrl: "https://campus.163.com/",
+      jobListUrls: { campus: "https://campus.163.com/", intern: "https://campus.163.com/" },
+      tags: ["互联网", "游戏", "教育", "音乐", "人工智能"],
+      dimensions: { stability: 82, growth: 80, student: 85, transparency: 80 },
+      evidence: [{ label: "官方校园招聘入口", url: "https://campus.163.com/" }]
+    },
+    {
+      company: "大疆",
+      aliases: ["DJI", "大疆创新"],
+      domains: ["careers.dji.com", "apply.careers.dji.com"],
+      careerUrl: "https://careers.dji.com/zh-CN/campus",
+      jobListUrls: { campus: "https://careers.dji.com/zh-CN/campus/hot-jobs", intern: "https://careers.dji.com/zh-CN/campus" },
+      tags: ["硬件", "机器人", "无人机", "人工智能", "嵌入式"],
+      dimensions: { stability: 79, growth: 90, student: 90, transparency: 86 },
+      evidence: [{ label: "官方校园招聘与热招职位", url: "https://careers.dji.com/zh-CN/campus/hot-jobs" }]
+    },
+    {
+      company: "OPPO",
+      aliases: ["欧珀"],
+      domains: ["careers.oppo.com"],
+      careerUrl: "https://careers.oppo.com/campus",
+      jobListUrls: { campus: "https://careers.oppo.com/university/oppo/campus/post", intern: "https://careers.oppo.com/university/oppo/campus/post" },
+      tags: ["硬件", "手机", "人工智能", "软件", "芯片"],
+      dimensions: { stability: 79, growth: 84, student: 86, transparency: 82 },
+      evidence: [{ label: "官方校园招聘与岗位列表", url: "https://careers.oppo.com/campus" }]
+    },
+    {
+      company: "联想",
+      aliases: ["Lenovo"],
+      domains: ["talent.lenovo.com.cn"],
+      careerUrl: "https://talent.lenovo.com.cn/",
+      jobListUrls: { campus: "https://talent.lenovo.com.cn/position?projectType=1", intern: "https://talent.lenovo.com.cn/position?projectType=2" },
+      tags: ["硬件", "人工智能", "软件", "云计算", "供应链"],
+      dimensions: { stability: 86, growth: 84, student: 88, transparency: 85 },
+      evidence: [{ label: "官方校园招聘与岗位列表", url: "https://talent.lenovo.com.cn/position?projectType=1" }]
+    },
+    {
+      company: "招商银行",
+      aliases: ["CMB", "招行"],
+      domains: ["career.cmbchina.com"],
+      careerUrl: "https://career.cmbchina.com/",
+      jobListUrls: { campus: "https://career.cmbchina.com/campus/home", intern: "https://career.cmbchina.com/campus/home" },
+      tags: ["金融", "银行", "数据", "软件", "人工智能"],
+      dimensions: { stability: 91, growth: 78, student: 86, transparency: 88 },
+      evidence: [{ label: "官方校园招聘入口", url: "https://career.cmbchina.com/" }]
     }
   ];
 
@@ -71,7 +165,7 @@
 
     if (known) {
       dimensions = { ...known.dimensions };
-      confidence = verifiedDomain ? 95 : 70;
+      confidence = verifiedDomain ? Math.min(95, Math.round(70 + known.evidence.length * 13)) : 70;
       evidence = known.evidence;
       reasons.push("具有官方企业资料");
       if (verifiedDomain) reasons.unshift("招聘域名已核验");

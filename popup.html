@@ -29,6 +29,10 @@
           <button id="parseResume" class="secondary">识别常用信息</button>
           <label class="file-button">导入 JSON<input id="importJson" type="file" accept="application/json,.json" /></label>
         </div>
+        <div class="row">
+          <label class="file-button">保存简历附件<input id="resumeFileInput" type="file" accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" /></label>
+          <span id="resumeFileName" class="file-name">尚未保存附件</span>
+        </div>
 
         <div class="grid">
           <label>姓名<input id="fullName" autocomplete="name" /></label>
@@ -73,15 +77,31 @@
         <div class="search-hint">综合排序：企业质量 30% + 岗位匹配 45% + 待遇 25%。未公开薪资不会被默认视为高待遇。</div>
         <div id="searchStatus" class="status" role="status"></div>
         <div id="results" class="results"></div>
+        <button id="loadMore" class="secondary full load-more" hidden>继续加载更多企业</button>
       </section>
 
       <section id="apply" class="panel">
         <div class="notice">
-          扩展会填写能确认的字段，把未知的必填项留给你。不会自动点击网站的最终提交按钮。
+          手动模式只填写能确认的字段；全自动模式仅在你勾选授权后提交。未知必填项会暂停询问并记住答案。
         </div>
         <button id="fillPage" class="primary full">扫描并填写当前页面</button>
         <div id="fillStatus" class="status" role="status"></div>
         <div id="unknownFields" class="unknown-fields"></div>
+        <div class="autopilot-card">
+          <h2>全自动投递队列</h2>
+          <div class="grid">
+            <label>本次最多投递<input id="dailyLimit" type="number" min="1" max="30" value="5" /></label>
+            <label>遇到验证码<select id="captchaPolicy"><option value="ask">暂停找我处理</option><option value="skip">跳过当前岗位</option></select></label>
+          </div>
+          <label class="consent"><input id="autoSubmitEnabled" type="checkbox" /> 我授权扩展对匹配且资料完整的岗位点击最终提交；未知必填项先询问并记住答案。</label>
+          <div class="row">
+            <button id="startAutopilot" class="primary">开始全自动投递</button>
+            <button id="resumeAutopilot" class="secondary">处理后继续</button>
+            <button id="stopAutopilot" class="secondary">停止</button>
+          </div>
+          <div id="autopilotStatus" class="status" role="status">尚未启动</div>
+          <div id="autopilotHistory" class="history"></div>
+        </div>
       </section>
     </main>
 

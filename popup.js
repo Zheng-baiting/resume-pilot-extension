@@ -3,13 +3,28 @@ const PROFILE_FIELDS = [
   "graduationYear", "currentCity", "skills", "targetRole", "targetCity",
   "targetIndustry", "positionType", "preferredCompanies", "qualityFocus",
   "availableDays", "internshipMonths", "maxExperienceYears", "minJobFit",
-  "minDailySalary", "minMonthlySalary", "avoidJobKeywords", "avoidCompanyKeywords"
+  "minDailySalary", "minMonthlySalary", "avoidJobKeywords", "avoidCompanyKeywords",
+  "dailyLimit", "captchaPolicy", "autoSubmitEnabled"
 ];
+
+let searchPage = 0;
+let searchHasMore = false;
+let searchLoading = false;
+let activeSearchProfile = null;
+const renderedUrls = new Set();
 
 document.addEventListener("DOMContentLoaded", async () => {
   bindTabs();
   bindActions();
   await restoreProfile();
+  await restoreResumeFile();
+  await restoreLatestScan();
+  await refreshAutopilotStatus();
+  window.addEventListener("scroll", () => {
+    if (searchHasMore && !searchLoading && window.innerHeight + window.scrollY >= document.body.scrollHeight - 90) {
+      loadMoreCompanies();
+    }
+  });
 });
 
 function bindTabs() {
@@ -25,21 +40,33 @@ function bindTabs() {
 function bindActions() {
   document.getElementById("parseResume").addEventListener("click", parseResumeText);
   document.getElementById("saveProfile").addEventListener("click", saveProfile);
-  document.getElementById("searchCompanies").addEventListener("click", searchCompanies);
+  document.getElementById("searchCompanies").addEventListener("click", () => searchCompanies(true));
+  document.getElementById("loadMore").addEventListener("click", loadMoreCompanies);
   document.getElementById("scanJobs").addEventListener("click", scanCurrentJobs);
   document.getElementById("fillPage").addEventListener("click", fillCurrentPage);
   document.getElementById("importJson").addEventListener("change", importJson);
+  document.getElementById("resumeFileInput").addEventListener("change", saveResumeFile);
+  document.getElementById("startAutopilot").addEventListener("click", startAutopilot);
+  document.getElementById("resumeAutopilot").addEventListener("click", resumeAutopilot);
+  document.getElementById("stopAutopilot").addEventListener("click", stopAutopilot);
 }
 
 async function restoreProfile() {
   const { profile = {} } = await chrome.storage.local.get("profile");
   for (const field of PROFILE_FIELDS) {
-    if (profile[field] != null) document.getElementById(field).value = profile[field];
+    const element = document.getElementById(field);
+    if (profile[field] != null) {
+      if (element.type === "checkbox") element.checked = Boolean(profile[field]);
+      else element.value = profile[field];
+    }
   }
 }
 
 function collectProfile() {
-  return Object.fromEntries(PROFILE_FIELDS.map((field) => [field, document.getElementById(field).value.trim()]));
+  return Object.fromEntries(PROFILE_FIELDS.map((field) => {
+    const element = document.getElementById(field);
+    return [field, element.type === "checkbox" ? element.checked : element.value.trim()];
+  }));
 }
 
 async function saveProfile() {
@@ -79,7 +106,11 @@ async function importJson(event) {
   try {
     const data = JSON.parse(await file.text());
     for (const field of PROFILE_FIELDS) {
-      if (data[field] != null) document.getElementById(field).value = String(data[field]);
+      if (data[field] != null) {
+        const element = document.getElementById(field);
+        if (element.type === "checkbox") element.checked = Boolean(data[field]);
+        else element.value = String(data[field]);
+      }
     }
     flash("JSON 已导入，请检查后保存");
   } catch {
@@ -89,60 +120,206 @@ async function importJson(event) {
   }
 }
 
-async function searchCompanies() {
+async function saveResumeFile(event) {
+  const file = event.target.files?.[0];
+  if (!file) return;
+  if (file.size > 5 * 1024 * 1024) {
+    flash("简历附件不能超过 5MB");
+    event.target.value = "";
+    return;
+  }
+  const base64 = await fileToBase64(file);
+  await chrome.storage.local.set({ resumeFile: { name: file.name, type: file.type, base64 } });
+  document.getElementById("resumeFileName").textContent = `已保存：${file.name}`;
+  flash("简历附件已保存在本机");
+  event.target.value = "";
+}
+
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(",")[1] || "");
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
+
+async function restoreResumeFile() {
+  const { resumeFile } = await chrome.storage.local.get("resumeFile");
+  if (resumeFile?.name) document.getElementById("resumeFileName").textContent = `已保存：${resumeFile.name}`;
+}
+
+async function restoreLatestScan() {
+  const { latestManualScan } = await chrome.storage.local.get("latestManualScan");
+  if (!latestManualScan?.results?.length || Date.now() - latestManualScan.createdAt > 10 * 60 * 1000) return;
+  const profile = collectProfile();
+  renderedUrls.clear();
+  document.getElementById("results").replaceChildren();
+  renderResults(filterResults(latestManualScan.results, profile));
+  document.getElementById("searchStatus").className = "status success";
+  document.getElementById("searchStatus").textContent = `自动进入岗位页后找到 ${latestManualScan.results.length} 个岗位。`;
+}
+
+async function startAutopilot() {
+  await saveProfile();
+  const profile = collectProfile();
+  const status = document.getElementById("autopilotStatus");
+  if (!profile.autoSubmitEnabled) {
+    status.className = "status error";
+    status.textContent = "请先勾选自动提交授权。";
+    return;
+  }
+  status.className = "status";
+  status.textContent = "正在启动自动投递队列…";
+  const response = await chrome.runtime.sendMessage({ type: "START_AUTOPILOT", profile });
+  if (!response?.ok) {
+    status.className = "status error";
+    status.textContent = response?.error || "启动失败";
+    return;
+  }
+  renderAutopilotState(response.state);
+}
+
+async function resumeAutopilot() {
+  const response = await chrome.runtime.sendMessage({ type: "RESUME_AUTOPILOT" });
+  if (!response?.ok) return renderAutopilotError(response?.error || "无法继续");
+  renderAutopilotState(response.state);
+}
+
+async function stopAutopilot() {
+  const response = await chrome.runtime.sendMessage({ type: "STOP_AUTOPILOT" });
+  if (!response?.ok) return renderAutopilotError(response?.error || "无法停止");
+  renderAutopilotState(response.state);
+}
+
+async function refreshAutopilotStatus() {
+  const response = await chrome.runtime.sendMessage({ type: "GET_AUTOPILOT_STATUS" });
+  if (response?.ok) renderAutopilotState(response.state);
+  const { applicationHistory = [] } = await chrome.storage.local.get("applicationHistory");
+  const container = document.getElementById("autopilotHistory");
+  container.replaceChildren();
+  for (const item of applicationHistory.slice(-8).reverse()) {
+    const row = document.createElement("div");
+    row.className = "history-item";
+    row.textContent = `${item.company} · ${item.job} · ${historyStatus(item.status)}`;
+    container.append(row);
+  }
+}
+
+function renderAutopilotState(state) {
+  const status = document.getElementById("autopilotStatus");
+  if (!state) {
+    status.className = "status";
+    status.textContent = "尚未启动";
+    return;
+  }
+  status.className = state.status.startsWith("waiting") || state.status === "error" ? "status error" : "status success";
+  status.textContent = `${state.lastMessage || state.status}｜已投/尝试 ${state.applied || 0}，跳过 ${state.skipped || 0}`;
+}
+
+function renderAutopilotError(message) {
+  const status = document.getElementById("autopilotStatus");
+  status.className = "status error";
+  status.textContent = message;
+}
+
+function historyStatus(status) {
+  const labels = {
+    submitted: "投递成功",
+    submitted_unverified: "已提交待核验",
+    no_matching_job: "无匹配岗位",
+    skipped_captcha: "验证码跳过"
+  };
+  return labels[status] || status;
+}
+
+async function searchCompanies(reset = true) {
+  if (searchLoading) return;
   await saveProfile();
   const status = document.getElementById("searchStatus");
   const results = document.getElementById("results");
-  const profile = collectProfile();
+  const profile = reset ? collectProfile() : (activeSearchProfile || collectProfile());
+  activeSearchProfile = profile;
+  if (reset) {
+    searchPage = 0;
+    searchHasMore = false;
+    renderedUrls.clear();
+    results.replaceChildren();
+  }
+  searchLoading = true;
   status.className = "status";
-  status.textContent = "正在搜索并筛选官网招聘入口…";
-  results.replaceChildren();
+  status.textContent = searchPage ? `正在加载第 ${searchPage + 1} 批企业…` : "正在搜索并筛选官网招聘入口…";
+  document.getElementById("loadMore").hidden = true;
 
   try {
     const response = await chrome.runtime.sendMessage({
       type: "SEARCH_OFFICIAL_CAREERS",
-      criteria: {
-        role: profile.targetRole,
-        city: profile.targetCity,
-        industry: profile.targetIndustry,
-        positionType: profile.positionType,
-        skills: profile.skills,
-        preferredCompanies: profile.preferredCompanies,
-        qualityFocus: profile.qualityFocus,
-        graduationYear: profile.graduationYear,
-        degree: profile.degree,
-        availableDays: profile.availableDays,
-        internshipMonths: profile.internshipMonths,
-        maxExperienceYears: profile.maxExperienceYears,
-        minDailySalary: profile.minDailySalary,
-        minMonthlySalary: profile.minMonthlySalary,
-        avoidJobKeywords: profile.avoidJobKeywords,
-        avoidCompanyKeywords: profile.avoidCompanyKeywords
-      }
+      criteria: { ...buildSearchCriteria(profile), page: searchPage }
     });
     if (!response?.ok) throw new Error(response?.error || "搜索失败");
     renderResults(filterResults(response.results, profile));
+    searchHasMore = Boolean(response.hasMore);
     status.className = "status success";
     status.textContent = response.results.length
-      ? `找到 ${response.results.length} 个候选入口，已按企业、岗位与待遇综合排序。`
+      ? `已显示 ${renderedUrls.size} 个企业/岗位候选；${searchHasMore ? "向下滑动继续加载。" : "已加载全部内置企业。"}`
       : "没有找到合适结果，请换一组条件。";
+    document.getElementById("loadMore").hidden = !searchHasMore;
+    if (searchHasMore && document.body.scrollHeight <= window.innerHeight + 80) setTimeout(loadMoreCompanies, 250);
   } catch (error) {
     status.className = "status error";
     status.textContent = `${error.message}。可以稍后重试或填写优先企业名称。`;
+  } finally {
+    searchLoading = false;
   }
+}
+
+function buildSearchCriteria(profile) {
+  return {
+    role: profile.targetRole,
+    city: profile.targetCity,
+    industry: profile.targetIndustry,
+    positionType: profile.positionType,
+    skills: profile.skills,
+    preferredCompanies: profile.preferredCompanies,
+    qualityFocus: profile.qualityFocus,
+    graduationYear: profile.graduationYear,
+    degree: profile.degree,
+    availableDays: profile.availableDays,
+    internshipMonths: profile.internshipMonths,
+    maxExperienceYears: profile.maxExperienceYears,
+    minDailySalary: profile.minDailySalary,
+    minMonthlySalary: profile.minMonthlySalary,
+    avoidJobKeywords: profile.avoidJobKeywords,
+    avoidCompanyKeywords: profile.avoidCompanyKeywords
+  };
+}
+
+function loadMoreCompanies() {
+  if (!searchHasMore || searchLoading) return;
+  searchPage += 1;
+  searchCompanies(false);
 }
 
 function renderResults(items) {
   const container = document.getElementById("results");
   for (const item of items) {
+    const key = item.url.replace(/\/$/, "");
+    if (renderedUrls.has(key)) continue;
+    renderedUrls.add(key);
     const card = document.createElement("article");
     card.className = "result-card";
     const titleRow = document.createElement("div");
     titleRow.className = "result-title-row";
-    const link = document.createElement("a");
-    link.href = item.url;
-    link.target = "_blank";
-    link.rel = "noreferrer";
+    const link = document.createElement(item.clickToken ? "button" : "a");
+    if (item.clickToken) {
+      link.type = "button";
+      link.className = "dynamic-job-link";
+      link.addEventListener("click", () => openDynamicJob(item));
+    } else {
+      link.href = item.url;
+      link.target = "_blank";
+      link.rel = "noreferrer";
+    }
     link.textContent = item.title || item.url;
     const badges = document.createElement("div");
     badges.className = "result-badges";
@@ -187,6 +364,18 @@ function renderResults(items) {
   }
 }
 
+async function openDynamicJob(item) {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const response = await chrome.runtime.sendMessage({ type: "OPEN_MANUAL_JOB", tabId: tab?.id, item });
+  if (!response?.ok) {
+    const status = document.getElementById("searchStatus");
+    status.className = "status error";
+    status.textContent = response?.error || "无法打开这个动态岗位";
+    return;
+  }
+  window.close();
+}
+
 function makeBadge(text, extraClass = "") {
   const badge = document.createElement("span");
   badge.className = `result-badge ${extraClass}`.trim();
@@ -196,7 +385,7 @@ function makeBadge(text, extraClass = "") {
 
 function filterResults(items, profile) {
   const minimum = Number(profile.minJobFit || 0);
-  return items.filter((item) => item.resultType === "招聘入口" || (item.jobScore ?? item.score ?? 0) >= minimum);
+  return items.filter((item) => ["招聘入口", "岗位列表"].includes(item.resultType) || (item.jobScore ?? item.score ?? 0) >= minimum);
 }
 
 async function scanCurrentJobs() {
@@ -211,6 +400,24 @@ async function scanCurrentJobs() {
     if (!tab?.id || !/^https?:/i.test(tab.url || "")) throw new Error("请先打开企业官网的岗位列表页");
     const response = await chrome.tabs.sendMessage(tab.id, { type: "SCAN_JOB_LIST", profile: collectProfile() });
     if (!response?.ok) throw new Error(response?.error || "岗位分析失败");
+    if (!response.results.length && response.recommendedUrl) {
+      await chrome.runtime.sendMessage({ type: "NAVIGATE_AND_SCAN", tabId: tab.id, url: response.recommendedUrl, profile: collectProfile() });
+      status.className = "status success";
+      status.textContent = "当前是招聘介绍页，已自动进入具体岗位列表；加载完成后结果会被保存。";
+      return;
+    }
+    if (!response.results.length && response.entrances?.length) {
+      const entrance = response.entrances.find((item) => item.url);
+      if (entrance) {
+        await chrome.runtime.sendMessage({ type: "NAVIGATE_AND_SCAN", tabId: tab.id, url: entrance.url, profile: collectProfile() });
+      } else {
+        await chrome.storage.local.set({ pendingManualScan: { tabId: tab.id, profile: collectProfile(), createdAt: Date.now(), depth: 0 } });
+        await chrome.tabs.sendMessage(tab.id, { type: "CLICK_JOB_ENTRANCE", index: response.entrances[0].index });
+      }
+      status.className = "status success";
+      status.textContent = "已识别职位入口并自动进入，岗位加载完成后会继续扫描。";
+      return;
+    }
     const profile = collectProfile();
     renderResults(filterResults(response.results, profile));
     status.className = "status success";
@@ -236,7 +443,8 @@ async function fillCurrentPage() {
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab?.id || !/^https?:/i.test(tab.url || "")) throw new Error("请先打开企业招聘申请页面");
-    const response = await chrome.tabs.sendMessage(tab.id, { type: "FILL_APPLICATION", profile: collectProfile() });
+    const { resumeFile = null } = await chrome.storage.local.get("resumeFile");
+    const response = await chrome.tabs.sendMessage(tab.id, { type: "FILL_APPLICATION", profile: collectProfile(), resumeFile });
     if (!response?.ok) throw new Error(response?.error || "页面无法填写");
     status.className = "status success";
     status.textContent = `已填写 ${response.filled} 项；发现 ${response.unknown} 个需要确认的必填项。`;

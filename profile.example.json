@@ -21,5 +21,8 @@
   "minMonthlySalary": "12",
   "avoidJobKeywords": "销售、外包、劳务派遣、夜班",
   "avoidCompanyKeywords": "外包、劳务派遣",
-  "preferredCompanies": "腾讯、字节跳动、华为"
+  "preferredCompanies": "腾讯、字节跳动、华为",
+  "dailyLimit": "1",
+  "captchaPolicy": "ask",
+  "autoSubmitEnabled": false
 }

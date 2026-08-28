@@ -99,6 +99,7 @@ button, .file-button {
 .spaced { margin-top: 8px; }
 .file-button { display: inline-flex; align-items: center; margin: 0; font-size: 14px; }
 .file-button input { display: none; }
+.file-name { align-self: center; overflow: hidden; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .full { width: 100%; }
 
 .notice {
@@ -127,6 +128,18 @@ button, .file-button {
 }
 
 .result-card a { color: var(--accent); font-weight: 700; text-decoration: none; }
+.dynamic-job-link {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+  padding: 0;
+  text-align: left;
+}
+.dynamic-job-link:hover { text-decoration: underline; }
 .result-title-row { display: flex; justify-content: space-between; gap: 8px; align-items: flex-start; }
 .result-badges { display: flex; flex: 0 0 auto; flex-wrap: wrap; justify-content: flex-end; gap: 3px; max-width: 152px; }
 .result-badge { padding: 2px 6px; border-radius: 999px; background: #ecfdf3; color: #067647; font-size: 10px; font-weight: 700; }
@@ -138,6 +151,15 @@ button, .file-button {
 .result-card p { display: -webkit-box; overflow: hidden; margin: 5px 0 0; color: var(--muted); font-size: 12px; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .result-meta { margin-top: 6px; color: #98a2b3; font-size: 11px; }
 .unknown-fields { display: grid; gap: 8px; }
+.load-more { margin-top: 8px; }
+.autopilot-card { margin-top: 16px; padding: 13px; border: 1px solid #bfdbfe; border-radius: 10px; background: #f8fbff; }
+.autopilot-card h2 { margin: 0 0 10px; font-size: 15px; }
+.consent { display: flex; gap: 7px; align-items: flex-start; padding: 9px; border-radius: 8px; background: #fff7ed; color: #9a3412; font-weight: 500; }
+.consent input { width: auto; margin: 3px 0 0; }
+.autopilot-card .row { flex-wrap: wrap; margin: 8px 0 0; }
+.autopilot-card .row button { flex: 1 1 110px; }
+.history { max-height: 150px; overflow: auto; color: #475467; font-size: 11px; }
+.history-item { padding: 6px 0; border-top: 1px solid var(--line); }
 .unknown-item { padding: 10px; border: 1px solid #fedf89; border-radius: 8px; background: #fffaeb; }
 
 footer {
