@@ -32,10 +32,29 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   if (changeInfo.status === "complete") handlePendingManualScan(tabId).catch(() => {});
+  if (changeInfo.status === "complete" && autopilotState?.active && autopilotState.tabId === tabId && autopilotState.status === "waiting_login") {
+    scheduleLoginRecovery(tabId);
+  }
   if (changeInfo.status === "complete" && autopilotState?.active && autopilotState.tabId === tabId && autopilotState.status === "running") {
     scheduleAutoStep(tabId, 1400);
   }
 });
+
+function scheduleLoginRecovery(tabId) {
+  setTimeout(async () => {
+    if (!autopilotState?.active || autopilotState.tabId !== tabId || autopilotState.status !== "waiting_login") return;
+    try {
+      const page = await sendTabMessage(tabId, { type: "CHECK_APPLICATION_PAGE" });
+      if (page.login) return;
+      if (page.captcha) return handleCaptcha("登录后页面出现验证码");
+      autopilotState.status = "running";
+      autopilotState.stage = autopilotState.resumeStage || "job";
+      autopilotState.lastMessage = "已检测到登录完成，自动恢复申请流程";
+      await persistAutopilot();
+      scheduleAutoStep(tabId, 400);
+    } catch {}
+  }, 1200);
+}
 
 chrome.tabs.onCreated.addListener((tab) => {
   if (autopilotState?.active && tab.openerTabId === autopilotState.tabId) {

@@ -26,6 +26,9 @@ async function handleMessage(message) {
   if (message?.type === "OPEN_SCANNED_JOB") return openScannedJob(message.clickToken || "", message.searchTerm || "");
   if (message?.type === "CLICK_JOB_ENTRANCE") return clickJobEntrance(message.index || 0);
   if (message?.type === "OPEN_APPLICATION") return openApplication();
+  if (message?.type === "CHECK_APPLICATION_PAGE") {
+    return { login: detectLoginRequired(), captcha: detectCaptcha(), formPresent: hasApplicationForm(), url: location.href };
+  }
   if (message?.type === "SUBMIT_APPLICATION") return submitApplication();
   if (message?.type === "DETECT_APPLICATION_SUCCESS") return detectApplicationSuccess();
   if (message?.type === "SHOW_AUTOMATION_NOTICE") {
