@@ -211,13 +211,19 @@ async function refreshAutopilotStatus() {
 
 function renderAutopilotState(state) {
   const status = document.getElementById("autopilotStatus");
+  const roles = document.getElementById("autopilotRoles");
   if (!state) {
     status.className = "status";
     status.textContent = "尚未启动";
+    roles.textContent = "";
     return;
   }
   status.className = state.status.startsWith("waiting") || state.status === "error" ? "status error" : "status success";
   status.textContent = `${state.lastMessage || state.status}｜已投/尝试 ${state.applied || 0}，跳过 ${state.skipped || 0}`;
+  const plan = state.rolePlan || [];
+  roles.textContent = plan.length
+    ? `简历岗位计划：${plan.map((item, index) => `${index === state.roleIndex ? "▶ " : ""}${item.role} ${item.fit}分`).join(" · ")}`
+    : "";
 }
 
 function renderAutopilotError(message) {

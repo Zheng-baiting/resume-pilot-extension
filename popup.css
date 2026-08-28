@@ -160,6 +160,7 @@ button, .file-button {
 .autopilot-card .row button { flex: 1 1 110px; }
 .history { max-height: 150px; overflow: auto; color: #475467; font-size: 11px; }
 .history-item { padding: 6px 0; border-top: 1px solid var(--line); }
+.role-plan { margin: 7px 0; padding: 7px 8px; border-radius: 7px; background: #eef4ff; color: #344054; font-size: 11px; line-height: 1.55; }
 .unknown-item { padding: 10px; border: 1px solid #fedf89; border-radius: 8px; background: #fffaeb; }
 
 footer {
