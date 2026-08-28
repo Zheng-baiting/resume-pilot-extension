@@ -391,10 +391,14 @@ async function autoJobStage(tabId) {
   const response = await sendTabMessage(tabId, { type: "OPEN_APPLICATION" });
   if (response.captcha) return handleCaptcha("岗位详情页出现验证码");
   if (response.login) return pauseAutopilot("waiting_login", "需要登录招聘网站；登录后点击继续");
+  if (!response.clicked && !response.formPresent) {
+    return pauseAutopilot("application_entry_missing", "已进入职位详情，但未找到可靠的“申请/投递”入口，需要人工确认");
+  }
   autopilotState.stage = "apply";
   autopilotState.resumeStage = "apply";
+  autopilotState.lastMessage = response.formPresent ? "申请表已打开，准备填写" : "已点击申请，等待申请表加载";
   await persistAutopilot();
-  scheduleAutoStep(tabId, response.clicked ? 1800 : 300);
+  scheduleAutoStep(tabId, response.clicked ? 2200 : 300);
 }
 
 async function autoApplyStage(tabId) {
@@ -406,6 +410,14 @@ async function autoApplyStage(tabId) {
   });
   if (response.login) return pauseAutopilot("waiting_login", "需要登录招聘网站；登录后点击继续");
   if (response.captcha) return handleCaptcha("申请表出现验证码");
+  if (!response.formPresent) {
+    autopilotState.stage = "job";
+    autopilotState.resumeStage = "job";
+    autopilotState.lastMessage = "当前还不是申请表，正在重新进入申请流程";
+    await persistAutopilot();
+    scheduleAutoStep(tabId, 400);
+    return;
+  }
   if (response.unknown > 0) {
     autopilotState.resumeStage = "apply";
     return pauseAutopilot("waiting_info", `有 ${response.unknown} 个新必填项需要回答；回答会被记住`);

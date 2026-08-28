@@ -240,14 +240,25 @@ function clickJobEntrance(index) {
 function openApplication() {
   const login = detectLoginRequired();
   const captcha = detectCaptcha();
-  if (login || captcha) return { clicked: false, login, captcha };
+  const formPresent = hasApplicationForm();
+  if (login || captcha || formPresent) return { clicked: false, login, captcha, formPresent };
   const candidates = [...document.querySelectorAll("a[href], button, [role='button'], input[type='button']")]
     .filter(isVisible)
-    .filter((node) => /(立即投递|申请职位|投递简历|投递该职位|开始申请|apply now|apply for|apply this job)/i.test(node.innerText || node.value || node.getAttribute("aria-label") || ""));
+    .filter((node) => /^(申请|投递|立即申请|立即投递|申请职位|投递简历|投递该职位|开始申请|apply|apply now|apply for|apply this job)$/i.test(String(node.innerText || node.value || node.getAttribute("aria-label") || "").replace(/\s+/g, " ").trim()));
   const target = candidates[0];
-  if (!target) return { clicked: false, login: false, captcha: false };
+  if (!target) return { clicked: false, login: false, captcha: false, formPresent: false };
   target.click();
-  return { clicked: true, login: false, captcha: false };
+  return { clicked: true, login: false, captcha: false, formPresent: false };
+}
+
+function hasApplicationForm() {
+  const fields = [...document.querySelectorAll("input, textarea, select")].filter((field) => {
+    const type = String(field.type || "").toLowerCase();
+    return isVisible(field) && !field.disabled && !["hidden", "search", "button", "submit", "reset"].includes(type);
+  });
+  if (fields.length < 2) return false;
+  const text = (document.body?.innerText || "").slice(0, 12000);
+  return /(姓名|手机号|邮箱|学校|教育经历|上传简历|个人信息|name|phone|email|education|resume|application form)/i.test(text);
 }
 
 function submitApplication() {
@@ -431,6 +442,17 @@ function inferPageCompany() {
 
 function fillApplication(profile, knownAnswers = {}, resumeFile = null) {
   document.getElementById("resume-pilot-assistant")?.remove();
+  const formPresent = hasApplicationForm();
+  if (!formPresent) {
+    return {
+      filled: 0,
+      unknown: 0,
+      unknownFields: [],
+      captcha: detectCaptcha(),
+      login: detectLoginRequired(),
+      formPresent: false
+    };
+  }
   const fields = getCandidateFields();
   const unknown = [];
   let filled = 0;
@@ -463,7 +485,8 @@ function fillApplication(profile, knownAnswers = {}, resumeFile = null) {
     unknown: unknown.length,
     unknownFields: unknown.map((item) => ({ label: item.label, key: item.key, kind: item.kind })),
     captcha,
-    login: detectLoginRequired()
+    login: detectLoginRequired(),
+    formPresent: true
   };
 }
 

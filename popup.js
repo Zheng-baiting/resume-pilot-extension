@@ -458,6 +458,7 @@ async function fillCurrentPage() {
     const { resumeFile = null } = await chrome.storage.local.get("resumeFile");
     const response = await chrome.tabs.sendMessage(tab.id, { type: "FILL_APPLICATION", profile: collectProfile(), resumeFile });
     if (!response?.ok) throw new Error(response?.error || "页面无法填写");
+    if (!response.formPresent) throw new Error(response.login ? "当前是登录页面，请先完成登录" : "当前还不是申请表，请先从具体岗位详情点击申请");
     status.className = "status success";
     status.textContent = `已填写 ${response.filled} 项；发现 ${response.unknown} 个需要确认的必填项。`;
   } catch (error) {
