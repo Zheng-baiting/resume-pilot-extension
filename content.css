@@ -1,0 +1,32 @@
+#resume-pilot-assistant {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 2147483647;
+  width: min(360px, calc(100vw - 36px));
+  max-height: min(620px, calc(100vh - 36px));
+  overflow: auto;
+  border: 1px solid #d0d5dd;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 16px 48px #10182833;
+  color: #17212b;
+  font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+}
+
+#resume-pilot-assistant * { box-sizing: border-box; }
+#resume-pilot-assistant .rp-head { display: flex; justify-content: space-between; align-items: center; padding: 13px 15px; background: #0f172a; color: #fff; }
+#resume-pilot-assistant .rp-head strong { font-size: 14px; }
+#resume-pilot-assistant .rp-close { border: 0; background: transparent; color: #cbd5e1; cursor: pointer; font-size: 20px; }
+#resume-pilot-assistant .rp-body { padding: 14px 15px; }
+#resume-pilot-assistant .rp-summary { margin: 0 0 11px; color: #475467; }
+#resume-pilot-assistant .rp-item { margin: 9px 0; }
+#resume-pilot-assistant label { display: block; margin-bottom: 4px; color: #344054; font-weight: 650; }
+#resume-pilot-assistant input { width: 100%; padding: 8px 9px; border: 1px solid #cfd6df; border-radius: 7px; color: #17212b; background: #fff; }
+#resume-pilot-assistant .rp-actions { display: flex; gap: 8px; margin-top: 13px; }
+#resume-pilot-assistant button.rp-primary, #resume-pilot-assistant button.rp-secondary { flex: 1; padding: 9px; border: 0; border-radius: 8px; cursor: pointer; font: inherit; font-weight: 700; }
+#resume-pilot-assistant button.rp-primary { background: #2563eb; color: #fff; }
+#resume-pilot-assistant button.rp-secondary { background: #e8eef8; color: #1e3a5f; }
+#resume-pilot-assistant .rp-warning { margin-top: 11px; padding: 9px; border-radius: 7px; background: #fffaeb; color: #854a0e; font-size: 12px; }
+.resume-pilot-filled { outline: 2px solid #22c55e !important; outline-offset: 1px !important; }
+.resume-pilot-unknown { outline: 2px solid #f59e0b !important; outline-offset: 1px !important; }

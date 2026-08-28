@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>简历领航</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header>
+      <div class="brand-mark">R</div>
+      <div>
+        <h1>简历领航</h1>
+        <p>官网发现 · 表单辅助 · 提交前确认</p>
+      </div>
+    </header>
+
+    <nav aria-label="功能导航">
+      <button class="tab active" data-tab="profile">1. 我的资料</button>
+      <button class="tab" data-tab="search">2. 找企业</button>
+      <button class="tab" data-tab="apply">3. 填当前页</button>
+    </nav>
+
+    <main>
+      <section id="profile" class="panel active">
+        <label for="resumeText">简历文字</label>
+        <textarea id="resumeText" rows="6" placeholder="可直接粘贴，也可导入 PDF、DOCX、TXT、MD 或 JSON。信息只保存在本机浏览器中。"></textarea>
+        <div class="row">
+          <button id="parseResume" class="secondary">识别常用信息</button>
+          <label class="file-button">导入简历文件<input id="importResumeFile" type="file" accept=".json,.pdf,.docx,.txt,.md,.doc,application/json,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown" /></label>
+        </div>
+        <div class="search-hint">PDF / DOCX 会自动读取正文并同时保存为投递附件；扫描件 PDF 需先做 OCR。最大 5MB。</div>
+        <div class="row">
+          <label class="file-button">仅更换投递附件<input id="resumeFileInput" type="file" accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" /></label>
+          <span id="resumeFileName" class="file-name">尚未保存附件</span>
+        </div>
+
+        <div class="grid">
+          <label>姓名<input id="fullName" autocomplete="name" /></label>
+          <label>手机号<input id="phone" autocomplete="tel" /></label>
+          <label>邮箱<input id="email" autocomplete="email" /></label>
+          <label>学校<input id="school" /></label>
+          <label>专业<input id="major" /></label>
+          <label>学历<select id="degree"><option value="">请选择</option><option>本科</option><option>硕士</option><option>博士</option><option>大专</option></select></label>
+          <label>毕业年份<input id="graduationYear" inputmode="numeric" placeholder="2027" /></label>
+          <label>所在城市<input id="currentCity" /></label>
+        </div>
+        <label>技能关键词<input id="skills" placeholder="Python, 数据分析, React" /></label>
+        <button id="saveProfile" class="primary full">保存资料</button>
+      </section>
+
+      <section id="search" class="panel">
+        <div class="grid">
+          <label>目标岗位<input id="targetRole" placeholder="前端开发实习生" /></label>
+          <label>目标城市<input id="targetCity" placeholder="上海" /></label>
+        </div>
+        <label>求职类型<select id="positionType"><option>实习</option><option>校园招聘</option><option>不限</option></select></label>
+        <label>目标行业<input id="targetIndustry" placeholder="互联网、人工智能" /></label>
+        <div class="grid">
+          <label>最低期望日薪（元）<input id="minDailySalary" inputmode="numeric" placeholder="200" /></label>
+          <label>最低期望月薪（k）<input id="minMonthlySalary" inputmode="decimal" placeholder="12" /></label>
+        </div>
+        <label>企业侧重点<select id="qualityFocus"><option value="balanced">综合均衡</option><option value="stability">稳定与公开披露优先</option><option value="growth">成长与创新优先</option><option value="student">学生培养优先</option></select></label>
+        <details class="advanced">
+          <summary>到岗能力与排除条件</summary>
+          <div class="grid inner-grid">
+            <label>每周可到岗<input id="availableDays" inputmode="numeric" placeholder="5" /></label>
+            <label>可实习月数<input id="internshipMonths" inputmode="numeric" placeholder="3" /></label>
+            <label>可接受经验要求<input id="maxExperienceYears" inputmode="numeric" value="0" /></label>
+            <label>最低岗位匹配分<input id="minJobFit" inputmode="numeric" value="45" /></label>
+          </div>
+          <label>排除岗位关键词<input id="avoidJobKeywords" placeholder="销售、外包、劳务派遣、夜班" /></label>
+          <label>排除企业关键词<input id="avoidCompanyKeywords" placeholder="外包、劳务派遣" /></label>
+        </details>
+        <label>优先企业（可选）<textarea id="preferredCompanies" rows="3" placeholder="腾讯、字节跳动、华为；不填则按条件搜索"></textarea></label>
+        <button id="searchCompanies" class="primary full">自动寻找合适企业与岗位</button>
+        <button id="scanJobs" class="secondary full spaced">分析当前官网的岗位列表</button>
+        <div class="search-hint">综合排序：企业质量 30% + 岗位匹配 45% + 待遇 25%。未公开薪资不会被默认视为高待遇。</div>
+        <div id="searchStatus" class="status" role="status"></div>
+        <div id="results" class="results"></div>
+        <button id="loadMore" class="secondary full load-more" hidden>继续加载更多企业</button>
+      </section>
+
+      <section id="apply" class="panel">
+        <div class="notice">
+          手动模式只填写能确认的字段；全自动模式仅在你勾选授权后提交。未知必填项会暂停询问并记住答案。
+        </div>
+        <button id="fillPage" class="primary full">扫描并填写当前页面</button>
+        <div id="fillStatus" class="status" role="status"></div>
+        <div id="unknownFields" class="unknown-fields"></div>
+        <div class="autopilot-card">
+          <h2>全自动投递队列</h2>
+          <div class="grid">
+            <label>本次最多投递<input id="dailyLimit" type="number" min="1" max="30" value="5" /></label>
+            <label>遇到验证码<select id="captchaPolicy"><option value="ask">暂停找我处理</option><option value="skip">跳过当前岗位</option></select></label>
+          </div>
+          <label class="consent"><input id="autoSubmitEnabled" type="checkbox" /> 我授权扩展对匹配且资料完整的岗位点击最终提交；未知必填项先询问并记住答案。</label>
+          <div class="row">
+            <button id="startAutopilot" class="primary">开始全自动投递</button>
+            <button id="resumeAutopilot" class="secondary">处理后继续</button>
+            <button id="stopAutopilot" class="secondary">停止</button>
+          </div>
+          <div id="autopilotStatus" class="status" role="status">尚未启动</div>
+          <div id="autopilotRoles" class="role-plan"></div>
+          <div id="autopilotHistory" class="history"></div>
+        </div>
+      </section>
+    </main>
+
+    <footer><span id="saveStatus"></span><span>本地存储</span></footer>
+    <script src="vendor/mammoth.browser.min.js"></script>
+    <script src="resume-import.js"></script>
+    <script src="popup.js"></script>
+  </body>
+</html>
