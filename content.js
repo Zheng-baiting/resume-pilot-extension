@@ -9,7 +9,7 @@ const FIELD_RULES = [
   { key: "currentCity", patterns: [/当前.*城市|所在.*城市|现居|location|current city/i] },
   { key: "skills", patterns: [/技能|技术栈|专长|skills?/i] }
 ];
-const CONTENT_SCRIPT_VERSION = "0.5.3";
+const CONTENT_SCRIPT_VERSION = "0.6.0";
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   handleMessage(message)
@@ -31,6 +31,7 @@ async function handleMessage(message) {
     };
   }
   if (message?.type === "INSPECT_RECRUITMENT_FLOW") return inspectRecruitmentFlow(message.profile || {});
+  if (message?.type === "PREPARE_JOB_DETAIL") return prepareJobDetail(message.profile || {}, message.job || {});
   if (message?.type === "OPEN_SCANNED_JOB") return openScannedJob(message.clickToken || "", message.searchTerm || "");
   if (message?.type === "OPEN_SCANNED_JOB_MAIN") return requestMainWorldJobClick(message.clickToken || "");
   if (message?.type === "CLICK_JOB_ENTRANCE") return clickJobEntrance(message.index || 0);
@@ -48,6 +49,22 @@ async function handleMessage(message) {
 }
 
 async function deepScanJobList(profile) {
+  if (location.hostname === "career.huawei.com" && /campus-recruitment-job-list/i.test(location.pathname)) {
+    const officialJobs = await scanHuaweiOfficialJobs(profile).catch(() => []);
+    if (officialJobs.length) {
+      return {
+        results: officialJobs,
+        entrances: [],
+        recommendedUrl: "",
+        officialFilters: {
+          positionType: String(profile.positionType || ""),
+          keywords: buildOfficialSearchTerms(profile),
+          source: "华为官网岗位接口（完整职责与要求）"
+        }
+      };
+    }
+  }
+
   const collected = new Map();
   await selectOfficialPositionType(profile);
   const searchInput = findOfficialSearchInput();
@@ -59,11 +76,10 @@ async function deepScanJobList(profile) {
       await collectOfficialJobPages(profile, collected);
       if (collected.size >= 30) break;
     }
-    // 官网关键词过严时自动清空，完整翻页后再由扩展评分，不能直接判定“无岗位”。
-    if (!collected.size) {
-      await runOfficialKeywordSearch(searchInput, "");
-      await collectOfficialJobPages(profile, collected);
-    }
+    // 无论关键词是否已有结果，都清空关键词并完整翻页一次。这样岗位标题不完全匹配，
+    // 但卡片内容命中简历技能的岗位也不会被漏掉。
+    await runOfficialKeywordSearch(searchInput, "");
+    await collectOfficialJobPages(profile, collected);
   } else {
     if (searchInput && searchInput.value.trim()) await runOfficialKeywordSearch(searchInput, "");
     await collectOfficialJobPages(profile, collected);
@@ -78,6 +94,172 @@ async function deepScanJobList(profile) {
       keywords: searchTerms
     }
   };
+}
+
+async function scanHuaweiOfficialJobs(profile) {
+  const recruitmentTypes = /不限/i.test(profile.positionType || "")
+    ? ["INTERN", "FRESH_GRADUATE"]
+    : (/校园|校招|应届|graduate|campus/i.test(profile.positionType || "") ? ["FRESH_GRADUATE"] : ["INTERN"]);
+  const jobs = await requestHuaweiOfficialJobs(recruitmentTypes);
+  const companyEval = ResumePilotScoring.evaluateCompany(document.title, location.href, profile);
+  return jobs.map((job) => {
+    const rankedIntentions = (job.intentions || []).map((item) => {
+      const itemText = stripHtml([item.positionIntention, item.jobResponsibilities, item.jobDemand, item.jobPlaceName].join(" "));
+      return { item, evaluation: ResumePilotScoring.evaluateJob(itemText, location.href, profile) };
+    }).sort((a, b) => {
+      if (a.evaluation.skillEligible !== b.evaluation.skillEligible) return a.evaluation.skillEligible ? -1 : 1;
+      return b.evaluation.jobScore - a.evaluation.jobScore;
+    });
+    const preferred = rankedIntentions[0]?.item || null;
+    const desiredCities = splitTerms(`${profile.targetCity || ""} ${profile.currentCity || ""}`);
+    const availableCities = String(preferred?.jobPlaceName || job.workPlace || "").split(/[\s/,，、]+/).filter(Boolean);
+    const preferredCity = desiredCities.find((city) => availableCities.some((value) => value.includes(city))) || availableCities[0] || "";
+    const departments = preferred?.deptAndPlaceList || [];
+    const cityDepartments = departments.filter((item) => !preferredCity || String(item.jobPlaceName || "").includes(preferredCity));
+    const preferredDepartment = (cityDepartments[0] || departments[0])?.deptName || "";
+    const intentionText = (job.intentions || []).map((item) => [
+      item.positionIntention,
+      item.jobResponsibilities,
+      item.jobDemand,
+      item.jobPlaceName
+    ].join(" ")).join(" ");
+    const text = stripHtml([
+      job.jobName,
+      job.categoryName,
+      job.workPlace,
+      job.mainBusiness,
+      job.jobRequire,
+      intentionText,
+      recruitmentTypes.includes("INTERN") ? "实习" : "校园招聘"
+    ].join(" "));
+    const url = `https://career.huawei.com/cn/job-details?advertisementId=${encodeURIComponent(job.advertisementId)}`;
+    const jobEval = ResumePilotScoring.evaluateJob(text, url, profile);
+    const score = Math.round(companyEval.companyScore * 0.3 + jobEval.jobScore * 0.45 + jobEval.compensationScore * 0.25);
+    return {
+      title: job.jobName,
+      url,
+      description: text.slice(0, 520),
+      company: "华为",
+      resultType: "官网岗位",
+      score,
+      companyScore: companyEval.companyScore,
+      jobScore: jobEval.jobScore,
+      matchedSkills: jobEval.matchedSkills,
+      skillEligible: jobEval.skillEligible,
+      hardBlocked: jobEval.hardBlocked,
+      compensationScore: jobEval.compensationScore,
+      compensationLabel: jobEval.compensationLabel,
+      confidence: Math.max(95, companyEval.confidence || 0),
+      reasons: [...new Set(["官网岗位 ID 可直达详情", ...companyEval.reasons, ...jobEval.reasons])].slice(0, 7),
+      warnings: [...new Set([...companyEval.warnings, ...jobEval.warnings])].slice(0, 6),
+      evidence: companyEval.evidence,
+      officialJobId: job.jobId,
+      advertisementId: job.advertisementId,
+      preferredIntention: preferred?.positionIntention || "",
+      preferredCity,
+      preferredDepartment
+    };
+  }).sort((a, b) => {
+    if (a.skillEligible !== b.skillEligible) return a.skillEligible ? -1 : 1;
+    return b.score - a.score;
+  }).slice(0, 100);
+}
+
+async function prepareJobDetail(profile, job) {
+  if (location.hostname !== "career.huawei.com" || !/job-details/i.test(location.pathname)) return { prepared: false, site: "generic" };
+  const selected = {};
+  const intentionInput = document.querySelector(".intention-select input");
+  if (intentionInput && !intentionInput.value) {
+    selected.intention = await selectHuaweiOption(intentionInput, job.preferredIntention || "");
+  } else if (intentionInput?.value) selected.intention = intentionInput.value;
+
+  const cityInput = document.querySelector(".aui-tag-input input");
+  if (cityInput && !document.querySelector(".aui-tag-input [class*='tag-item'], .aui-tag-input [class*='tag-label']")) {
+    selected.city = await selectHuaweiOption(cityInput, job.preferredCity || profile.targetCity || profile.currentCity || "");
+    // 华为地点是多选控件，选择后弹层不会自行关闭；先点到弹层外再打开部门下拉。
+    cityInput.click();
+    document.querySelector(".details-item.position-intention .item-title")?.click();
+    document.querySelectorAll(".aui-popup").forEach((popup) => { if (isVisible(popup)) popup.remove(); });
+    cityInput.blur();
+    await wait(250);
+  }
+
+  const departmentInput = document.querySelector(".parent-department-select input");
+  if (departmentInput && !departmentInput.value) {
+    selected.department = await selectHuaweiOption(departmentInput, job.preferredDepartment || "");
+  } else if (departmentInput?.value) selected.department = departmentInput.value;
+
+  return {
+    prepared: Boolean(!intentionInput || intentionInput.value),
+    selected,
+    missingDepartment: Boolean(document.querySelector(".select-department-tips"))
+  };
+}
+
+async function selectHuaweiOption(input, preferredText) {
+  input.scrollIntoView({ block: "center", behavior: "instant" });
+  input.click();
+  await wait(350);
+  let options = visibleHuaweiOptions();
+  if (!options.length) return "";
+  const desiredTerms = splitTerms(preferredText);
+  const findPreferred = () => options.find((option) => {
+    const text = String(option.innerText || option.textContent || "").replace(/\s+/g, " ").trim();
+    return preferredText && (text === preferredText || text.includes(preferredText) || desiredTerms.some((term) => text.includes(term)));
+  });
+  let chosen = findPreferred();
+  // 部门列表使用虚拟滚动，目标部门不一定首屏渲染；逐屏寻找后才使用首项兜底。
+  for (let round = 0; !chosen && preferredText && round < 10; round += 1) {
+    const popup = [...document.querySelectorAll(".aui-popup")].find(isVisible);
+    const scroller = popup?.querySelector(".aui-recycle-list, .pc-list");
+    if (!scroller) break;
+    scroller.scrollTop += Math.max(180, scroller.clientHeight * 0.8);
+    scroller.dispatchEvent(new Event("scroll", { bubbles: true }));
+    await wait(120);
+    options = visibleHuaweiOptions();
+    chosen = findPreferred();
+  }
+  chosen ||= options[0];
+  const value = String(chosen.innerText || chosen.textContent || "").replace(/\s+/g, " ").trim();
+  chosen.click();
+  await wait(450);
+  return value;
+}
+
+function visibleHuaweiOptions() {
+  return [...document.querySelectorAll(".aui-popup .option, .aui-select-popover-popper .option")]
+    .filter(isVisible)
+    .filter((option) => String(option.innerText || option.textContent || "").trim());
+}
+
+function requestHuaweiOfficialJobs(recruitmentTypes) {
+  return new Promise((resolve, reject) => {
+    const requestId = `huawei-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const timeout = setTimeout(() => {
+      window.removeEventListener("message", onMessage);
+      reject(new Error("读取华为官网岗位超时"));
+    }, 30000);
+    function onMessage(event) {
+      const response = event.data;
+      if (event.source !== window || response?.source !== "resume-pilot-huawei-official-response" || response.requestId !== requestId) return;
+      clearTimeout(timeout);
+      window.removeEventListener("message", onMessage);
+      if (!response.ok) reject(new Error(response.error || "华为官网岗位读取失败"));
+      else resolve(Array.isArray(response.jobs) ? response.jobs : []);
+    }
+    window.addEventListener("message", onMessage);
+    window.postMessage({
+      source: "resume-pilot-huawei-official-request",
+      requestId,
+      recruitmentTypes
+    }, location.origin);
+  });
+}
+
+function stripHtml(value) {
+  const box = document.createElement("div");
+  box.innerHTML = String(value || "");
+  return String(box.textContent || "").replace(/\s+/g, " ").trim();
 }
 
 async function collectOfficialJobPages(profile, collected) {
@@ -391,6 +573,7 @@ function wait(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 
 function scanJobList(profile) {
   const roleTerms = splitTerms(profile.targetRole);
+  const skillTerms = splitTerms(profile.skills);
   const positionType = String(profile.positionType || "").trim();
   const company = inferPageCompany();
   const seen = new Set();
@@ -402,7 +585,7 @@ function scanJobList(profile) {
     if (!/^https?:/i.test(url) || seen.has(url)) continue;
     const card = link.closest("li, article, tr, [class*='job'], [class*='position'], [class*='card'], [class*='item']");
     const text = String(card?.innerText || link.innerText || link.getAttribute("aria-label") || "").replace(/\s+/g, " ").trim();
-    if (text.length < 4 || text.length > 1000 || !looksLikeJob(text, url, roleTerms, positionType)) continue;
+    if (text.length < 4 || text.length > 1000 || !looksLikeJob(text, url, roleTerms, positionType, skillTerms)) continue;
 
     const companyEval = ResumePilotScoring.evaluateCompany(`${document.title} ${text}`, url, profile);
     const jobEval = ResumePilotScoring.evaluateJob(text, url, profile);
@@ -418,6 +601,9 @@ function scanJobList(profile) {
       score,
       companyScore: companyEval.companyScore,
       jobScore: jobEval.jobScore,
+      matchedSkills: jobEval.matchedSkills,
+      skillEligible: jobEval.skillEligible,
+      hardBlocked: jobEval.hardBlocked,
       compensationScore: jobEval.compensationScore,
       compensationLabel: jobEval.compensationLabel,
       confidence: companyEval.confidence,
@@ -434,7 +620,7 @@ function scanJobList(profile) {
     const text = String(card.innerText || card.textContent || "").replace(/\s+/g, " ").trim();
     const title = extractCardJobTitle(card, text);
     const signature = normalizeClickSignature(title);
-    if (!signature || text.length < 4 || text.length > 1000 || !looksLikeJob(text, location.href, roleTerms, positionType)) continue;
+    if (!signature || text.length < 4 || text.length > 1000 || !looksLikeJob(text, location.href, roleTerms, positionType, skillTerms)) continue;
     if (candidates.some((item) => normalizeClickSignature(item.title) === signature)) continue;
 
     const companyEval = ResumePilotScoring.evaluateCompany(`${document.title} ${text}`, location.href, profile);
@@ -455,6 +641,9 @@ function scanJobList(profile) {
       score,
       companyScore: companyEval.companyScore,
       jobScore: jobEval.jobScore,
+      matchedSkills: jobEval.matchedSkills,
+      skillEligible: jobEval.skillEligible,
+      hardBlocked: jobEval.hardBlocked,
       compensationScore: jobEval.compensationScore,
       compensationLabel: jobEval.compensationLabel,
       confidence: companyEval.confidence,
@@ -530,12 +719,13 @@ async function openScannedJob(clickToken, searchTerm = "") {
   return { clicked: true, beforeUrl, currentUrl: location.href, opening: true };
 }
 
-function looksLikeJob(text, url, roleTerms, positionType) {
+function looksLikeJob(text, url, roleTerms, positionType, skillTerms = []) {
   const haystack = `${text} ${url}`;
   const jobSignal = /(职位|岗位|招聘|实习|校招|应届|工程师|开发|产品|运营|设计|算法|测试|job|position|career|intern|engineer|developer)/i.test(haystack);
   const roleSignal = roleTerms.some((term) => haystack.toLowerCase().includes(term.toLowerCase()));
+  const skillSignal = skillTerms.some((term) => haystack.toLowerCase().includes(term.toLowerCase()));
   const typeSignal = positionType && positionType !== "不限" && haystack.toLowerCase().includes(positionType.toLowerCase());
-  return jobSignal && (roleSignal || typeSignal || /(position|job\/|jobdetail|职位详情)/i.test(url));
+  return jobSignal && (roleSignal || skillSignal || typeSignal || /(position|job\/|jobdetail|职位详情)/i.test(url));
 }
 
 function splitTerms(value = "") {

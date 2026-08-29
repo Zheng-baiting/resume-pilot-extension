@@ -436,7 +436,7 @@ function makeBadge(text, extraClass = "") {
 
 function filterResults(items, profile) {
   const minimum = Number(profile.minJobFit || 0);
-  return items.filter((item) => ["招聘入口", "岗位列表"].includes(item.resultType) || (item.jobScore ?? item.score ?? 0) >= minimum);
+  return items.filter((item) => ["招聘入口", "岗位列表"].includes(item.resultType) || (!item.hardBlocked && (item.skillEligible || (item.jobScore ?? item.score ?? 0) >= minimum)));
 }
 
 function displayScannedResults(items, profile) {

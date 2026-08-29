@@ -295,6 +295,9 @@ function enrichResult(item, criteria) {
     score,
     companyScore: companyEval.companyScore,
     jobScore: jobEval.jobScore,
+    matchedSkills: jobEval.matchedSkills,
+    skillEligible: jobEval.skillEligible,
+    hardBlocked: jobEval.hardBlocked,
     compensationScore: jobEval.compensationScore,
     compensationLabel: jobEval.compensationLabel,
     confidence: companyEval.confidence,
@@ -487,7 +490,7 @@ async function autoScanStage(tabId) {
   autopilotState.roleResults = [...resultMap.values()].sort((a, b) => b.rankingScore - a.rankingScore).slice(0, 100);
 
   const candidates = evaluated
-    .filter((item) => item.jobScore >= minimum)
+    .filter((item) => !item.hardBlocked && (item.skillEligible || item.jobScore >= minimum))
     .sort((a, b) => b.rankingScore - a.rankingScore);
   if (candidates.length) return openAutoCandidate(tabId, candidates[0]);
 
@@ -502,7 +505,7 @@ async function autoScanStage(tabId) {
 
   const relaxedMinimum = Math.max(30, minimum - 10);
   const fallback = (autopilotState.roleResults || [])
-    .filter((item) => item.jobScore >= relaxedMinimum && !appliedUrls.has(item.url))
+    .filter((item) => !item.hardBlocked && (item.skillEligible || item.jobScore >= relaxedMinimum) && !appliedUrls.has(item.url))
     .sort((a, b) => b.rankingScore - a.rankingScore)[0];
   if (fallback) return openAutoCandidate(tabId, fallback, `全部方向搜索完成，选择最接近岗位：${fallback.title}`);
 
@@ -553,6 +556,14 @@ async function autoJobStage(tabId) {
     return;
   }
   autopilotState.jobOpenChecks = 0;
+  const detailPreparation = await sendTabMessage(tabId, {
+    type: "PREPARE_JOB_DETAIL",
+    profile: autopilotState.profile,
+    job: autopilotState.currentJob || {}
+  });
+  if (detailPreparation.site !== "generic" && (!detailPreparation.prepared || detailPreparation.missingDepartment)) {
+    return pauseAutopilot("waiting_job_choice", "已进入岗位详情，但官网仍要求选择岗位意向、地点或部门；请完成选择后点击继续");
+  }
   const response = await sendTabMessage(tabId, { type: "OPEN_APPLICATION" });
   if (response.captcha) return handleCaptcha("岗位详情页出现验证码");
   if (response.login) return pauseAutopilot("waiting_login", "需要登录招聘网站；登录后点击继续");

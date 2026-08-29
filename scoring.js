@@ -221,6 +221,7 @@
     const reasons = [];
     const warnings = [];
     let score = 0;
+    let hardBlocked = false;
 
     const matchedRoles = roleTerms.filter((term) => haystack.includes(term.toLowerCase()));
     if (roleTerms.length) {
@@ -238,10 +239,11 @@
       else warnings.push("地点未确认");
     } else score += 7;
 
-    const matchedSkills = skillTerms.filter((term) => haystack.includes(term.toLowerCase()));
+    const matchedSkills = skillTerms.filter((term) => skillTermMatches(haystack, term));
     if (skillTerms.length) {
-      score += Math.min(20, Math.round((matchedSkills.length / skillTerms.length) * 20));
-      if (matchedSkills.length) reasons.push(`技能：${matchedSkills.slice(0, 4).join("、")}`);
+      // 任一明确技能命中就应进入候选；命中数量继续影响排序，但不再因简历技能较多而稀释到接近 0 分。
+      score += matchedSkills.length ? Math.min(35, 18 + matchedSkills.length * 5) : 0;
+      if (matchedSkills.length) reasons.push(`技能命中：${matchedSkills.slice(0, 5).join("、")}`);
       else warnings.push("摘要中未发现简历技能词");
     } else score += 8;
 
@@ -261,6 +263,7 @@
     const maxExperience = Number(profile.maxExperienceYears || 0);
     if (experience != null && experience > maxExperience) {
       score -= 25;
+      hardBlocked = true;
       warnings.push(`岗位可能要求 ${experience} 年经验`);
     }
 
@@ -268,6 +271,7 @@
     const availableDays = Number(profile.availableDays || 0);
     if (requiredDays && availableDays && requiredDays > availableDays) {
       score -= 18;
+      hardBlocked = true;
       warnings.push(`可能要求每周 ${requiredDays} 天，你填写的是 ${availableDays} 天`);
     }
 
@@ -275,28 +279,65 @@
     const availableMonths = Number(profile.internshipMonths || 0);
     if (requiredMonths && availableMonths && requiredMonths > availableMonths) {
       score -= 15;
+      hardBlocked = true;
       warnings.push(`可能要求实习 ${requiredMonths} 个月，你填写的是 ${availableMonths} 个月`);
     }
 
     if (/(硕士及以上|硕士以上|master'?s? degree required)/i.test(haystack) && /本科|大专/.test(profile.degree || "")) {
       score -= 25;
+      hardBlocked = true;
       warnings.push("学历要求可能高于当前学历");
     }
 
     const avoided = splitList(profile.avoidJobKeywords).filter((term) => haystack.includes(term.toLowerCase()));
     if (avoided.length) {
       score -= Math.min(45, avoided.length * 18);
+      hardBlocked = true;
       warnings.push(`命中岗位排除词：${avoided.join("、")}`);
     }
 
     const compensation = evaluateCompensation(haystack, profile);
     return {
       jobScore: clamp(Math.round(score)),
+      matchedSkills: unique(matchedSkills),
+      skillEligible: matchedSkills.length > 0,
+      hardBlocked,
       compensationScore: compensation.score,
       compensationLabel: compensation.label,
       reasons: unique(reasons).slice(0, 5),
       warnings: unique([...warnings, ...compensation.warnings]).slice(0, 6)
     };
+  }
+
+  function skillTermMatches(haystack, rawTerm) {
+    const term = clean(rawTerm).toLowerCase();
+    if (!term) return false;
+    const aliases = {
+      js: ["js", "javascript"],
+      javascript: ["javascript", "js"],
+      ts: ["ts", "typescript"],
+      typescript: ["typescript", "ts"],
+      "node.js": ["node.js", "nodejs"],
+      nodejs: ["nodejs", "node.js"],
+      vue: ["vue", "vue.js", "vuejs"],
+      react: ["react", "react.js", "reactjs"],
+      "c++": ["c++", "cpp"],
+      cpp: ["cpp", "c++"],
+      "c#": ["c#", "csharp"],
+      csharp: ["csharp", "c#"],
+      ai: ["ai", "人工智能"],
+      人工智能: ["人工智能", "ai"],
+      数据分析: ["数据分析", "data analysis"],
+      机器学习: ["机器学习", "machine learning"],
+      深度学习: ["深度学习", "deep learning"]
+    };
+    return (aliases[term] || [term]).some((candidate) => {
+      if (/^[a-z0-9+#.]+$/i.test(candidate)) {
+        const escaped = candidate.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        return new RegExp(`(^|[^a-z0-9])${escaped}(?=$|[^a-z0-9])`, "i").test(haystack);
+      }
+      return haystack.includes(candidate.toLowerCase());
+    });
   }
 
   function evaluateCompensation(text, profile) {
