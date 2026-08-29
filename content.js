@@ -23,11 +23,12 @@ async function handleMessage(message) {
     return fillApplication(message.profile || {}, knownAnswers, message.resumeFile || null);
   }
   if (message?.type === "SCAN_JOB_LIST") return deepScanJobList(message.profile || {});
+  if (message?.type === "INSPECT_RECRUITMENT_FLOW") return inspectRecruitmentFlow(message.profile || {});
   if (message?.type === "OPEN_SCANNED_JOB") return openScannedJob(message.clickToken || "", message.searchTerm || "");
   if (message?.type === "CLICK_JOB_ENTRANCE") return clickJobEntrance(message.index || 0);
   if (message?.type === "OPEN_APPLICATION") return openApplication();
   if (message?.type === "CHECK_APPLICATION_PAGE") {
-    return { login: detectLoginRequired(), captcha: detectCaptcha(), formPresent: hasApplicationForm(), url: location.href };
+    return inspectRecruitmentFlow({});
   }
   if (message?.type === "SUBMIT_APPLICATION") return submitApplication();
   if (message?.type === "DETECT_APPLICATION_SUCCESS") return detectApplicationSuccess();
@@ -114,6 +115,76 @@ function findOfficialSearchInput() {
     }) || null;
 }
 
+function findOfficialSearchButton(input = null) {
+  const scopes = input ? [
+    input.closest("form"),
+    input.parentElement?.parentElement,
+    input.closest("[class*='search'], [class*='filter']")?.parentElement,
+    document
+  ].filter(Boolean) : [document];
+  for (const scope of scopes) {
+    const button = [...scope.querySelectorAll("button, [role='button'], input[type='button'], input[type='submit']")]
+      .find((element) => isVisible(element) && /^(搜索|查询|查找|search)$/i.test(String(element.innerText || element.value || element.textContent || element.getAttribute("aria-label") || "").replace(/\s+/g, " ").trim()));
+    if (button) return button;
+  }
+  return null;
+}
+
+function inspectRecruitmentFlow(profile = {}) {
+  const login = detectLoginRequired();
+  const captcha = detectCaptcha();
+  const formPresent = hasApplicationForm();
+  const searchInput = findOfficialSearchInput();
+  const searchButton = findOfficialSearchButton(searchInput);
+  const scannedCandidates = scanJobList(profile);
+  const directJobLinks = scannedCandidates.filter((item) => !item.clickToken).length;
+  const clickCards = scannedCandidates.filter((item) => item.clickToken).length;
+  const embeddedFrame = [...document.querySelectorAll("iframe[src]")]
+    .find((frame) => isVisible(frame) && /(job|career|recruit|position|vacanc|apply|ats|workday|greenhouse|lever)/i.test(frame.src || ""));
+  const applicationEntries = [...document.querySelectorAll("a[href], button, [role='button'], input[type='button']")]
+    .filter(isVisible)
+    .filter((node) => /^(申请|投递|立即申请|立即投递|申请职位|投递简历|投递该职位|开始申请|apply|apply now|apply for|apply this job)$/i.test(String(node.innerText || node.value || node.getAttribute("aria-label") || "").replace(/\s+/g, " ").trim()));
+  const entrances = discoverJobEntrances();
+  let pageType = "unknown";
+  if (login) pageType = "login";
+  else if (captcha) pageType = "captcha";
+  else if (formPresent) pageType = "application";
+  else if (applicationEntries.length) pageType = "detail";
+  else if (searchInput || directJobLinks || clickCards || pagerItems().length) pageType = "list";
+  else if (embeddedFrame) pageType = "embedded";
+  else if (entrances.length) pageType = "landing";
+  const openMethod = directJobLinks ? "direct_link" : (clickCards ? "click_card" : "unknown");
+  const pagination = pagerItems().length > 1 ? "numbered" : (document.documentElement.scrollHeight > innerHeight * 1.8 ? "scroll_or_single" : "single");
+  const searchMethod = searchInput ? (searchButton ? "button" : "enter_or_live") : "none";
+  const summaryMap = {
+    landing: "介绍页→职位入口",
+    list: `岗位列表→${searchMethod === "button" ? "按钮筛选" : searchMethod === "enter_or_live" ? "回车/即时筛选" : "扩展评分"}→${openMethod === "direct_link" ? "岗位链接" : openMethod === "click_card" ? "点击岗位卡" : "待验证入口"}`,
+    detail: "岗位详情→申请入口",
+    login: "登录页→登录后返回申请",
+    application: "申请表→填写→提交前校验",
+    captcha: "验证码→按用户策略处理",
+    embedded: "嵌入式招聘系统→打开独立岗位页面",
+    unknown: "尚未识别，使用通用探测"
+  };
+  return {
+    url: location.href,
+    host: location.hostname,
+    pageType,
+    login,
+    captcha,
+    formPresent,
+    searchMethod,
+    openMethod,
+    pagination,
+    directJobLinks,
+    clickCards,
+    applicationEntries: applicationEntries.length,
+    embeddedUrl: embeddedFrame?.src || "",
+    entrances: entrances.length,
+    summary: summaryMap[pageType]
+  };
+}
+
 function buildOfficialSearchTerms(profile) {
   const raw = String(profile.targetRole || "").replace(/(实习生?|校园招聘|校招|应届生?)/gi, " ").replace(/\s+/g, " ").trim();
   if (!raw) return [];
@@ -131,13 +202,21 @@ async function runOfficialKeywordSearch(input, term) {
   setter ? setter.call(input, term) : (input.value = term);
   input.dispatchEvent(new Event("input", { bubbles: true }));
   input.dispatchEvent(new Event("change", { bubbles: true }));
-  const container = input.closest("form, [class*='search'], [class*='filter']") || input.parentElement?.parentElement;
-  const searchButton = [...(container || document).querySelectorAll("button, [role='button']")]
-    .find((element) => isVisible(element) && /^(搜索|查询|查找|search)$/i.test(String(element.innerText || element.textContent || element.getAttribute("aria-label") || "").trim()));
+  // 很多官网（包括华为）把按钮放在输入框组件的兄弟节点，不能只在最近的
+  // `.search-*` 容器里找。按“表单 → 上层区域 → 全页面”逐级扩大范围。
+  const searchButton = findOfficialSearchButton(input);
   if (searchButton) searchButton.click();
   else input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", bubbles: true }));
-  await waitForJobListChange(before);
-  return true;
+  let changed = await waitForJobListChange(before);
+  // 某些 Vue/React 页面第一次只同步输入值；若没有任何列表变化，再用全页按钮重试一次。
+  if (!changed) {
+    const fallbackButton = findOfficialSearchButton();
+    if (fallbackButton && fallbackButton !== searchButton) {
+      fallbackButton.click();
+      changed = await waitForJobListChange(before);
+    }
+  }
+  return changed;
 }
 
 async function waitForJobListChange(before) {
@@ -257,11 +336,17 @@ function openApplication() {
 function hasApplicationForm() {
   const fields = [...document.querySelectorAll("input, textarea, select")].filter((field) => {
     const type = String(field.type || "").toLowerCase();
-    return isVisible(field) && !field.disabled && !["hidden", "search", "button", "submit", "reset"].includes(type);
+    return isVisible(field) && !field.disabled && !["hidden", "search", "button", "submit", "reset", "radio", "checkbox", "password"].includes(type);
   });
   if (fields.length < 2) return false;
   const text = (document.body?.innerText || "").slice(0, 12000);
-  return /(姓名|手机号|邮箱|学校|教育经历|上传简历|个人信息|name|phone|email|education|resume|application form)/i.test(text);
+  const personalPattern = /(姓名|名字|手机号|联系电话|邮箱|电子邮件|学校|院校|专业|学历|教育经历|毕业年份|name|phone|mobile|e-?mail|university|college|major|degree|education)/i;
+  const personalFields = fields.filter((field) => personalPattern.test(describeField(field)));
+  if (personalFields.length >= 2) return true;
+  // 只有“上传简历”推荐组件、搜索框、跳页输入框不构成申请表。
+  const applicationContext = /(填写简历|个人信息|基本信息|教育经历|工作经历|申请表|application form|personal information|candidate profile)/i.test(text)
+    || /\/(?:apply|application|resume)(?:\/|\?|$)/i.test(location.pathname);
+  return applicationContext && personalFields.length >= 1 && fields.length >= 3;
 }
 
 function submitApplication() {
@@ -378,6 +463,7 @@ function findClickableJobCards() {
   const selectors = [
     ".job-item", ".position-item", ".job-card", ".position-card",
     "[class*='job-list'] > li", "[class*='position-list'] > li",
+    "[class*='vacancy']", "[class*='opening']", "[class*='recruit'] [class*='item']",
     "[data-job-id]", "[data-position-id]", "[data-jobid]", "[data-positionid]"
   ];
   const cards = [...document.querySelectorAll(selectors.join(","))]
@@ -400,6 +486,12 @@ async function openScannedJob(clickToken, searchTerm = "") {
   if (searchInput && searchInput.value !== searchTerm) await runOfficialKeywordSearch(searchInput, searchTerm);
   let cards = findClickableJobCards();
   let target = cards.find((card) => normalizeClickSignature(extractCardJobTitle(card, card.innerText || "")) === clickToken);
+  // 输入框可能已经显示关键词，但官网状态仍是旧列表。找不到目标时强制再次触发官网搜索。
+  if (!target && searchInput && searchTerm) {
+    await runOfficialKeywordSearch(searchInput, searchTerm);
+    cards = findClickableJobCards();
+    target = cards.find((card) => normalizeClickSignature(extractCardJobTitle(card, card.innerText || "")) === clickToken);
+  }
   if (!target && pagerItems().length > 1) {
     if (currentJobPageNumber() !== 1) await clickJobPageNumber(1);
     for (let attempt = 0; attempt < 8 && !target; attempt += 1) {
@@ -412,10 +504,11 @@ async function openScannedJob(clickToken, searchTerm = "") {
   const beforeUrl = location.href;
   target.scrollIntoView({ block: "center", behavior: "instant" });
   // 常见站点把事件绑定在岗位名称容器或整张卡片上；避开“收藏/分享”。
-  const clickTarget = target.querySelector(".job-name-box, .position-name-box, [class*='job-title'], [class*='position-title']") || target;
-  clickTarget.click();
-  await wait(250);
-  return { clicked: true, beforeUrl, currentUrl: location.href };
+  const clickTarget = target.querySelector(".job-name, .position-name, .job-name-box, .position-name-box, [class*='job-title'], [class*='position-title']") || target;
+  // 先回复后台，再执行点击。否则同标签页立即导航时消息端口会随旧页面销毁，
+  // 后台会把“其实已经打开详情”误判成失败。
+  setTimeout(() => clickTarget.click(), 40);
+  return { clicked: true, beforeUrl, currentUrl: location.href, opening: true };
 }
 
 function looksLikeJob(text, url, roleTerms, positionType) {

@@ -261,9 +261,11 @@ function renderAutopilotState(state) {
   status.className = state.status.startsWith("waiting") || state.status === "error" ? "status error" : "status success";
   status.textContent = `${state.lastMessage || state.status}｜已投/尝试 ${state.applied || 0}，跳过 ${state.skipped || 0}`;
   const plan = state.rolePlan || [];
-  roles.textContent = plan.length
+  const roleText = plan.length
     ? `简历岗位计划：${plan.map((item, index) => `${index === state.roleIndex ? "▶ " : ""}${item.role} ${item.fit}分`).join(" · ")}`
     : "";
+  const flowText = state.siteFlow?.summary ? `官网流程：${state.siteFlow.summary}` : "";
+  roles.textContent = [flowText, roleText].filter(Boolean).join("\n");
 }
 
 function renderAutopilotError(message) {
