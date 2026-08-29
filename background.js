@@ -16,6 +16,14 @@ const VERIFIED_CAREER_SEEDS = ResumePilotScoring.companies.map((entry) => ({
 
 chrome.storage.local.get(AUTO_STATE_KEY).then((data) => {
   autopilotState = data[AUTO_STATE_KEY] || null;
+  const runtimeVersion = chrome.runtime.getManifest().version;
+  if (autopilotState && autopilotState.extensionVersion !== runtimeVersion) {
+    autopilotState.active = false;
+    autopilotState.status = "stopped";
+    autopilotState.extensionVersion = runtimeVersion;
+    autopilotState.lastMessage = `已升级到 v${runtimeVersion}，旧队列已安全停止；请检查后重新开始`;
+    persistAutopilot().catch(() => {});
+  }
   if (autopilotState && !autopilotState.rolePlan?.length) {
     autopilotState.rolePlan = inferRolePlan(autopilotState.profile || {});
     autopilotState.roleIndex = 0;
@@ -310,6 +318,7 @@ async function startAutopilot(profile) {
   const rolePlan = inferRolePlan(profile);
   autopilotState = {
     id: Date.now(),
+    extensionVersion: chrome.runtime.getManifest().version,
     active: true,
     status: "running",
     stage: "company",
