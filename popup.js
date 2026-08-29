@@ -265,7 +265,10 @@ function renderAutopilotState(state) {
     ? `简历岗位计划：${plan.map((item, index) => `${index === state.roleIndex ? "▶ " : ""}${item.role} ${item.fit}分`).join(" · ")}`
     : "";
   const flowText = state.siteFlow?.summary ? `官网流程：${state.siteFlow.summary}` : "";
-  roles.textContent = [flowText, roleText].filter(Boolean).join("\n");
+  const queueText = state.jobQueue?.length
+    ? `同企业岗位队列：${Math.max(1, Number(state.jobQueueIndex || 0) + 1)}/${state.jobQueue.length}`
+    : "";
+  roles.textContent = [flowText, queueText, roleText].filter(Boolean).join("\n");
 }
 
 function renderAutopilotError(message) {

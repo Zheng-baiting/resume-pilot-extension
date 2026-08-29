@@ -338,6 +338,8 @@ async function startAutopilot(profile) {
     dailyLimit: Math.max(1, Math.min(30, Number(profile.dailyLimit || 5))),
     currentCompany: null,
     currentJob: null,
+    jobQueue: [],
+    jobQueueIndex: -1,
     siteFlow: null,
     tabId: null,
     navigationDepth: 0,
@@ -367,6 +369,8 @@ async function resumeAutopilot() {
     autopilotState.currentRole = autopilotState.rolePlan[0];
     autopilotState.roleResults = [];
   }
+  autopilotState.jobQueue ||= [];
+  if (!Number.isInteger(autopilotState.jobQueueIndex)) autopilotState.jobQueueIndex = -1;
   autopilotState.active = true;
   autopilotState.status = "running";
   autopilotState.stage = autopilotState.resumeStage || autopilotState.stage || "scan";
@@ -393,6 +397,8 @@ async function moveToNextCompany(reason = "") {
   autopilotState.companyIndex += 1;
   autopilotState.currentCompany = autopilotState.companies[autopilotState.companyIndex];
   autopilotState.currentJob = null;
+  autopilotState.jobQueue = [];
+  autopilotState.jobQueueIndex = -1;
   autopilotState.siteFlow = null;
   autopilotState.roleIndex = 0;
   autopilotState.currentRole = autopilotState.rolePlan?.[0] || { role: clean(autopilotState.profile.targetRole) || "目标岗位", fit: 40, reasons: [] };
@@ -489,25 +495,32 @@ async function autoScanStage(tabId) {
   }
   autopilotState.roleResults = [...resultMap.values()].sort((a, b) => b.rankingScore - a.rankingScore).slice(0, 100);
 
-  const candidates = evaluated
-    .filter((item) => !item.hardBlocked && (item.skillEligible || item.jobScore >= minimum))
-    .sort((a, b) => b.rankingScore - a.rankingScore);
-  if (candidates.length) return openAutoCandidate(tabId, candidates[0]);
-
   if (autopilotState.roleIndex + 1 < (autopilotState.rolePlan || []).length) {
     autopilotState.roleIndex += 1;
     autopilotState.currentRole = autopilotState.rolePlan[autopilotState.roleIndex];
-    autopilotState.lastMessage = `${autopilotState.currentCompany.company} 暂无“${role.role}”达标岗位，继续搜索：${autopilotState.currentRole.role}`;
+    const eligibleCount = (autopilotState.roleResults || []).filter((item) => !item.hardBlocked && (item.skillEligible || item.jobScore >= minimum)).length;
+    autopilotState.lastMessage = `${autopilotState.currentCompany.company} 已收集 ${eligibleCount} 个技能匹配岗位，继续搜索：${autopilotState.currentRole.role}`;
     await persistAutopilot();
     scheduleAutoStep(tabId, 350);
     return;
   }
 
   const relaxedMinimum = Math.max(30, minimum - 10);
-  const fallback = (autopilotState.roleResults || [])
-    .filter((item) => !item.hardBlocked && (item.skillEligible || item.jobScore >= relaxedMinimum) && !appliedUrls.has(item.url))
-    .sort((a, b) => b.rankingScore - a.rankingScore)[0];
-  if (fallback) return openAutoCandidate(tabId, fallback, `全部方向搜索完成，选择最接近岗位：${fallback.title}`);
+  let queue = (autopilotState.roleResults || [])
+    .filter((item) => !item.hardBlocked && (item.skillEligible || item.jobScore >= minimum) && !appliedUrls.has(item.url))
+    .sort((a, b) => b.rankingScore - a.rankingScore);
+  if (!queue.length) {
+    queue = (autopilotState.roleResults || [])
+      .filter((item) => !item.hardBlocked && (item.skillEligible || item.jobScore >= relaxedMinimum) && !appliedUrls.has(item.url))
+      .sort((a, b) => b.rankingScore - a.rankingScore);
+  }
+  if (queue.length) {
+    const remaining = Math.max(1, autopilotState.dailyLimit - autopilotState.applied);
+    autopilotState.jobQueue = queue.slice(0, remaining);
+    autopilotState.jobQueueIndex = 0;
+    const first = autopilotState.jobQueue[0];
+    return openAutoCandidate(tabId, first, `全部方向搜索完成；${autopilotState.currentCompany.company} 共找到 ${autopilotState.jobQueue.length} 个匹配岗位，先投：${first.title}`);
+  }
 
   autopilotState.skipped += 1;
   await addHistory("no_matching_job", `已逐个搜索 ${(autopilotState.rolePlan || []).map((item) => item.role).join("、")}，未找到达标岗位`);
@@ -533,6 +546,25 @@ async function openAutoCandidate(tabId, candidate, message = "") {
   } else {
     await chrome.tabs.update(tabId, { url: candidate.url, active: true });
   }
+}
+
+async function moveToNextJobInCompany(reason = "") {
+  if (!autopilotState?.active) return;
+  if (autopilotState.applied >= autopilotState.dailyLimit) return moveToNextCompany(reason);
+  const queue = autopilotState.jobQueue || [];
+  const nextIndex = Number(autopilotState.jobQueueIndex ?? -1) + 1;
+  if (nextIndex < queue.length) {
+    autopilotState.jobQueueIndex = nextIndex;
+    autopilotState.currentJob = null;
+    autopilotState.siteFlow = null;
+    const next = queue[nextIndex];
+    return openAutoCandidate(
+      autopilotState.tabId,
+      next,
+      `${reason ? `${reason}；` : ""}同一企业继续投递第 ${nextIndex + 1}/${queue.length} 个匹配岗位：${next.title}`
+    );
+  }
+  return moveToNextCompany(`${reason ? `${reason}；` : ""}该企业的匹配岗位已处理完`);
 }
 
 async function autoJobStage(tabId) {
@@ -661,14 +693,14 @@ async function autoVerifyStage(tabId) {
   const response = await sendTabMessage(tabId, { type: "DETECT_APPLICATION_SUCCESS" });
   autopilotState.applied += 1;
   await addHistory(response.success ? "submitted" : "submitted_unverified", response.success ? "页面确认投递成功" : "已提交但页面未返回明确成功文字");
-  await moveToNextCompany(response.success ? "投递成功" : "已提交，结果待核验");
+  await moveToNextJobInCompany(response.success ? "投递成功" : "已提交，结果待核验");
 }
 
 async function handleCaptcha(message) {
   if ((autopilotState.profile.captchaPolicy || "ask") === "skip") {
     autopilotState.skipped += 1;
     await addHistory("skipped_captcha", message);
-    return moveToNextCompany("遇到验证码，已按设置跳过");
+    return moveToNextJobInCompany("遇到验证码，已按设置跳过当前岗位");
   }
   autopilotState.resumeStage = autopilotState.stage;
   return pauseAutopilot("waiting_captcha", `${message}；完成验证码后点击继续`);

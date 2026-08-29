@@ -9,7 +9,7 @@ const FIELD_RULES = [
   { key: "currentCity", patterns: [/当前.*城市|所在.*城市|现居|location|current city/i] },
   { key: "skills", patterns: [/技能|技术栈|专长|skills?/i] }
 ];
-const CONTENT_SCRIPT_VERSION = "0.6.0";
+const CONTENT_SCRIPT_VERSION = "0.7.0";
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   handleMessage(message)
@@ -172,28 +172,155 @@ async function prepareJobDetail(profile, job) {
   if (intentionInput && !intentionInput.value) {
     selected.intention = await selectHuaweiOption(intentionInput, job.preferredIntention || "");
   } else if (intentionInput?.value) selected.intention = intentionInput.value;
+  // 岗位意向会触发接口请求并重建地点/部门区域，不能在同一帧立刻判定控件不存在。
+  await waitForHuaweiControl(".aui-tag-input input, .parent-department-select input", 2800);
 
   const cityInput = document.querySelector(".aui-tag-input input");
   if (cityInput && !document.querySelector(".aui-tag-input [class*='tag-item'], .aui-tag-input [class*='tag-label']")) {
     selected.city = await selectHuaweiOption(cityInput, job.preferredCity || profile.targetCity || profile.currentCity || "");
     // 华为地点是多选控件，选择后弹层不会自行关闭；先点到弹层外再打开部门下拉。
-    cityInput.click();
-    document.querySelector(".details-item.position-intention .item-title")?.click();
-    document.querySelectorAll(".aui-popup").forEach((popup) => { if (isVisible(popup)) popup.remove(); });
+    await closeHuaweiPopup();
     cityInput.blur();
     await wait(250);
   }
+  await waitForHuaweiControl(".parent-department-select input", 2800);
 
-  const departmentInput = document.querySelector(".parent-department-select input");
-  if (departmentInput && !departmentInput.value) {
-    selected.department = await selectHuaweiOption(departmentInput, job.preferredDepartment || "");
-  } else if (departmentInput?.value) selected.department = departmentInput.value;
+  const parentDepartmentInput = document.querySelector(".parent-department-select input");
+  if (parentDepartmentInput && !parentDepartmentInput.value) {
+    selected.departmentGroup = await selectHuaweiDepartmentOption(parentDepartmentInput, profile, job, "parent");
+  } else if (parentDepartmentInput?.value) selected.departmentGroup = parentDepartmentInput.value;
+
+  // 华为部分岗位是两级部门：只选 ICT BG 等一级部门仍会保留红色必填提示。
+  // 必须等待二级列表根据一级部门刷新后，再按简历技能选择最贴近的产品线/研发部。
+  await closeHuaweiPopup();
+  await wait(450);
+  const subDepartmentInput = document.querySelector(".sub-department-select input");
+  if (subDepartmentInput && !subDepartmentInput.value) {
+    selected.department = await selectHuaweiDepartmentOption(subDepartmentInput, profile, job, "sub");
+  } else if (subDepartmentInput?.value) selected.department = subDepartmentInput.value;
+
+  const intentionReady = !intentionInput || Boolean(intentionInput.value || selected.intention);
+  const cityReady = !cityInput || Boolean(selected.city || document.querySelector(".aui-tag-input [class*='tag-item'], .aui-tag-input [class*='tag-label']"));
+  const departmentRequired = Boolean(document.querySelector(".select-department-tips, .departments-select-box, .parent-department-select"));
+  const parentReady = !departmentRequired || Boolean(parentDepartmentInput?.value || selected.departmentGroup);
+  const hasSubDepartment = Boolean(document.querySelector(".departments-select-box.have-sub-dept, .sub-department-select"));
+  const subReady = !hasSubDepartment || Boolean(subDepartmentInput?.value);
+  const missingDepartment = !parentReady || !subReady || Boolean(document.querySelector(".select-department-tips"));
 
   return {
-    prepared: Boolean(!intentionInput || intentionInput.value),
+    prepared: intentionReady && cityReady && !missingDepartment,
     selected,
-    missingDepartment: Boolean(document.querySelector(".select-department-tips"))
+    missingDepartment
   };
+}
+
+async function waitForHuaweiControl(selector, timeoutMs) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    const control = document.querySelector(selector);
+    if (control) return control;
+    await wait(120);
+  }
+  return null;
+}
+
+async function selectHuaweiDepartmentOption(input, profile, job, level) {
+  input.scrollIntoView({ block: "center", behavior: "instant" });
+  input.click();
+  await wait(450);
+  const options = await collectHuaweiOptionTexts();
+  if (!options.length) return "";
+  const ranked = options
+    .map((text, index) => ({ text, index, score: scoreHuaweiDepartment(text, profile, job, level) }))
+    .sort((a, b) => b.score - a.score || a.index - b.index);
+  const best = ranked[0]?.text || options[0];
+  const selected = await clickHuaweiOptionByText(input, best);
+  return selected || "";
+}
+
+function scoreHuaweiDepartment(optionText, profile, job, level) {
+  const text = String(optionText || "").replace(/\s+/g, "").toLowerCase();
+  const context = [
+    profile.targetRole, profile.skills, profile.major, profile.targetIndustry,
+    profile.projectExperience, job.title, job.description, job.matchedRole,
+    job.preferredIntention
+  ].filter(Boolean).join(" ").toLowerCase();
+  const preferred = String(job.preferredDepartment || "").replace(/\s+/g, "").toLowerCase();
+  let score = 1;
+  // 接口返回的 deptName 只是该地点可选部门中的第一项，并非官网推荐；只作轻量提示，
+  // 避免它压过由简历技能和岗位职责计算出的实际匹配度。
+  if (preferred && (text.includes(preferred) || preferred.includes(text))) score += 18;
+
+  const add = (signal, parentTerms, subTerms, weight) => {
+    if (!signal.test(context)) return;
+    const terms = level === "parent" ? parentTerms : subTerms;
+    const hitIndex = terms.findIndex((term) => text.includes(term));
+    if (hitIndex >= 0) score += Math.max(4, weight - hitIndex * 5);
+  };
+  add(/前端|javascript|typescript|react|vue|html|css|小程序|web/, ["终端bg", "云计算bu", "ictbg", "2012实验室"], ["软件", "公共开发", "云软件", "终端", "计算", "应用"], 78);
+  add(/后端|服务端|java|python|node|golang|go语言|数据库|mysql|spring/, ["云计算bu", "ictbg", "2012实验室", "终端bg"], ["云软件", "软件研发", "公共开发", "云核心网", "数据存储", "计算"], 76);
+  add(/软件|开发|编程|工程师|developer|engineer/, ["云计算bu", "终端bg", "ictbg", "2012实验室"], ["软件", "开发", "计算", "云", "数据"], 52);
+  add(/数据|sql|大数据|数据仓库|分析|spark|hadoop/, ["云计算bu", "2012实验室", "ictbg"], ["数据存储", "数据通信", "计算", "云软件", "公共开发"], 76);
+  add(/人工智能|ai|算法|机器学习|深度学习|pytorch|tensorflow|大模型/, ["2012实验室", "云计算bu", "智能汽车解决方案bu", "终端bg"], ["计算", "算法", "人工智能", "云", "软件"], 82);
+  add(/网络|通信|安全|隐私|tcp|ip|5g|无线/, ["ictbg", "2012实验室", "云计算bu"], ["数据通信", "云核心网", "无线网络", "网络", "安全"], 80);
+  add(/嵌入式|c\+\+|c语言|鸿蒙|harmony|驱动|硬件|芯片|器件/, ["终端bg", "芯片与器件bu", "半导体业务部", "智能汽车解决方案bu"], ["芯片", "器件", "终端", "计算", "公共开发"], 82);
+  add(/云|cloud|容器|docker|kubernetes|微服务/, ["云计算bu", "ictbg", "2012实验室"], ["云软件", "云核心网", "计算", "数据存储"], 84);
+  return score;
+}
+
+async function collectHuaweiOptionTexts() {
+  const values = [];
+  let lastTop = -1;
+  for (let round = 0; round < 12; round += 1) {
+    for (const option of visibleHuaweiOptions()) {
+      const text = String(option.innerText || option.textContent || "").replace(/\s+/g, " ").trim();
+      if (text && !values.includes(text)) values.push(text);
+    }
+    const popup = [...document.querySelectorAll(".aui-popup, .aui-select-popover-popper")].find(isVisible);
+    const scroller = popup?.querySelector(".aui-recycle-list, .pc-list, [class*='scroll']");
+    if (!scroller || scroller.scrollHeight <= scroller.clientHeight || scroller.scrollTop === lastTop) break;
+    lastTop = scroller.scrollTop;
+    scroller.scrollTop = Math.min(scroller.scrollHeight, scroller.scrollTop + Math.max(180, scroller.clientHeight * 0.8));
+    scroller.dispatchEvent(new Event("scroll", { bubbles: true }));
+    await wait(120);
+  }
+  return values;
+}
+
+async function clickHuaweiOptionByText(input, desiredText) {
+  for (let round = 0; round < 12; round += 1) {
+    const option = visibleHuaweiOptions().find((item) => {
+      const text = String(item.innerText || item.textContent || "").replace(/\s+/g, " ").trim();
+      return text === desiredText;
+    });
+    if (option) {
+      const value = String(option.innerText || option.textContent || "").replace(/\s+/g, " ").trim();
+      option.click();
+      await wait(550);
+      return value;
+    }
+    const popup = [...document.querySelectorAll(".aui-popup, .aui-select-popover-popper")].find(isVisible);
+    const scroller = popup?.querySelector(".aui-recycle-list, .pc-list, [class*='scroll']");
+    if (!scroller) break;
+    scroller.scrollTop = round === 0 ? 0 : scroller.scrollTop + Math.max(180, scroller.clientHeight * 0.8);
+    scroller.dispatchEvent(new Event("scroll", { bubbles: true }));
+    await wait(120);
+  }
+  return "";
+}
+
+async function closeHuaweiPopup() {
+  const popup = [...document.querySelectorAll(".aui-popup, .aui-select-popover-popper")].find(isVisible);
+  if (!popup) return;
+  const outside = document.querySelector("header, .header, .details-item.position-intention .item-title, .job-detail-title, h1") || document.body;
+  // AUI/Popper 使用 document 级的 pointer/mouse down 判断“点到外面”，单独调用
+  // HTMLElement.click() 不足以关闭多选弹层，因此补齐正常指针事件序列。
+  for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup", "click"]) {
+    outside.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, composed: true, view: window }));
+  }
+  document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", keyCode: 27, bubbles: true }));
+  document.dispatchEvent(new KeyboardEvent("keyup", { key: "Escape", code: "Escape", keyCode: 27, bubbles: true }));
+  await wait(220);
 }
 
 async function selectHuaweiOption(input, preferredText) {
