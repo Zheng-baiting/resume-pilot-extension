@@ -1,7 +1,9 @@
 (function installMainWorldJobClickBridge() {
+  const BRIDGE_VERSION = "0.5.3";
   const REQUEST_EVENT = "resume-pilot-open-job-main";
   const TOKEN_ATTRIBUTE = "data-resume-pilot-click-token";
   const RESULT_ATTRIBUTE = "data-resume-pilot-click-result";
+  document.documentElement.setAttribute("data-resume-pilot-main-click-version", BRIDGE_VERSION);
 
   function normalize(value) {
     return String(value || "").toLowerCase().replace(/[\s|｜·—_\-（）()【】\[\]，,。.:：;/\\]/g, "").slice(0, 80);

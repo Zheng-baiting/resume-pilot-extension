@@ -9,6 +9,7 @@ const FIELD_RULES = [
   { key: "currentCity", patterns: [/当前.*城市|所在.*城市|现居|location|current city/i] },
   { key: "skills", patterns: [/技能|技术栈|专长|skills?/i] }
 ];
+const CONTENT_SCRIPT_VERSION = "0.5.3";
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   handleMessage(message)
@@ -23,6 +24,12 @@ async function handleMessage(message) {
     return fillApplication(message.profile || {}, knownAnswers, message.resumeFile || null);
   }
   if (message?.type === "SCAN_JOB_LIST") return deepScanJobList(message.profile || {});
+  if (message?.type === "GET_CONTENT_VERSION") {
+    return {
+      version: CONTENT_SCRIPT_VERSION,
+      mainBridgeVersion: document.documentElement.getAttribute("data-resume-pilot-main-click-version") || ""
+    };
+  }
   if (message?.type === "INSPECT_RECRUITMENT_FLOW") return inspectRecruitmentFlow(message.profile || {});
   if (message?.type === "OPEN_SCANNED_JOB") return openScannedJob(message.clickToken || "", message.searchTerm || "");
   if (message?.type === "OPEN_SCANNED_JOB_MAIN") return requestMainWorldJobClick(message.clickToken || "");

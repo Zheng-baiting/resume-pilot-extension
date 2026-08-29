@@ -429,6 +429,7 @@ async function runAutoStep(tabId) {
 }
 
 async function autoScanStage(tabId) {
+  if (!(await ensureCurrentPageScripts(tabId))) return;
   const role = autopilotState.currentRole || autopilotState.rolePlan?.[autopilotState.roleIndex] || { role: autopilotState.profile.targetRole, fit: 40 };
   const roleProfile = { ...autopilotState.profile, targetRole: role.role };
   // 每个公司、每次进入新的招聘页面都先识别流程，再开始找岗位。
@@ -532,6 +533,7 @@ async function openAutoCandidate(tabId, candidate, message = "") {
 }
 
 async function autoJobStage(tabId) {
+  if (!(await ensureCurrentPageScripts(tabId))) return;
   const pageState = await sendTabMessage(tabId, { type: "CHECK_APPLICATION_PAGE" });
   if (pageState.captcha) return handleCaptcha("岗位详情页出现验证码");
   if (pageState.login) return pauseAutopilot("waiting_login", "需要登录招聘网站；登录后点击继续");
@@ -562,6 +564,34 @@ async function autoJobStage(tabId) {
   autopilotState.lastMessage = response.formPresent ? "申请表已打开，准备填写" : "已点击申请，等待申请表加载";
   await persistAutopilot();
   scheduleAutoStep(tabId, response.clicked ? 2200 : 300);
+}
+
+async function ensureCurrentPageScripts(tabId) {
+  const expectedVersion = chrome.runtime.getManifest().version;
+  const versionInfo = await chrome.tabs.sendMessage(tabId, { type: "GET_CONTENT_VERSION" }).catch(() => null);
+  if (versionInfo?.ok && versionInfo.version === expectedVersion && versionInfo.mainBridgeVersion === expectedVersion) {
+    if (autopilotState.contentRefreshes) {
+      autopilotState.contentRefreshes = 0;
+      await persistAutopilot();
+    }
+    return true;
+  }
+  const refreshes = Number(autopilotState.contentRefreshes || 0);
+  if (refreshes >= 2) {
+    await pauseAutopilot("waiting_script_refresh", "岗位页未加载当前版本的点击组件；请手动刷新该页面后点击“处理后继续”");
+    return false;
+  }
+  const tab = await chrome.tabs.get(tabId).catch(() => null);
+  autopilotState.contentRefreshes = refreshes + 1;
+  if (/job-list|position-list|campus-recruitment-job-list/i.test(tab?.url || "")) {
+    autopilotState.stage = "scan";
+    autopilotState.resumeStage = "scan";
+    autopilotState.jobOpenChecks = 0;
+  }
+  autopilotState.lastMessage = `检测到岗位页仍是旧脚本，正在自动刷新并恢复（${autopilotState.contentRefreshes}/2）`;
+  await persistAutopilot();
+  await chrome.tabs.reload(tabId);
+  return false;
 }
 
 async function retryOpenCurrentCandidate(tabId, attempt) {
