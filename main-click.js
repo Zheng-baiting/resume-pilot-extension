@@ -1,5 +1,5 @@
 (function installMainWorldJobClickBridge() {
-  const BRIDGE_VERSION = "0.7.0";
+  const BRIDGE_VERSION = "0.8.0";
   const REQUEST_EVENT = "resume-pilot-open-job-main";
   const TOKEN_ATTRIBUTE = "data-resume-pilot-click-token";
   const RESULT_ATTRIBUTE = "data-resume-pilot-click-result";
@@ -11,7 +11,7 @@
 
   function findCards() {
     const selectors = [
-      ".job-item", ".position-item", ".job-card", ".position-card",
+      ".job-item", ".position-item", ".job-card", ".position-card", ".post_box",
       "[class*='job-list'] > li", "[class*='position-list'] > li",
       "[class*='vacancy']", "[class*='opening']", "[class*='recruit'] [class*='item']",
       "[data-job-id]", "[data-position-id]", "[data-jobid]", "[data-positionid]"
@@ -20,7 +20,8 @@
   }
 
   function titleOf(card) {
-    return card.querySelector(".job-name, .position-name, [class*='job-name'], [class*='position-name'], h1, h2, h3, h4, [class*='title']")?.textContent || card.textContent || "";
+    if (card.matches?.(".post_box")) return card.textContent || "";
+    return card.querySelector(".job-name, .position-name, .post_title, [class*='job-name'], [class*='position-name'], h1, h2, h3, h4, [class*='title']")?.textContent || card.textContent || "";
   }
 
   document.addEventListener(REQUEST_EVENT, () => {
@@ -32,7 +33,7 @@
       return;
     }
     target.scrollIntoView({ block: "center", behavior: "instant" });
-    const clickTarget = target.querySelector(".job-name-box, .position-name-box, [class*='job-title'], [class*='position-title'], .job-name, .position-name") || target;
+    const clickTarget = target.querySelector(".job-name-box, .position-name-box, .post_title, [class*='job-title'], [class*='position-title'], .job-name, .position-name") || target;
     root.setAttribute(RESULT_ATTRIBUTE, "clicked");
     clickTarget.click();
   }, true);

@@ -9,7 +9,7 @@ const FIELD_RULES = [
   { key: "currentCity", patterns: [/当前.*城市|所在.*城市|现居|location|current city/i] },
   { key: "skills", patterns: [/技能|技术栈|专长|skills?/i] }
 ];
-const CONTENT_SCRIPT_VERSION = "0.7.0";
+const CONTENT_SCRIPT_VERSION = "0.8.0";
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   handleMessage(message)
@@ -36,6 +36,7 @@ async function handleMessage(message) {
   if (message?.type === "OPEN_SCANNED_JOB_MAIN") return requestMainWorldJobClick(message.clickToken || "");
   if (message?.type === "CLICK_JOB_ENTRANCE") return clickJobEntrance(message.index || 0);
   if (message?.type === "OPEN_APPLICATION") return openApplication();
+  if (message?.type === "TRY_AUTO_LOGIN") return tryAutoLogin();
   if (message?.type === "CHECK_APPLICATION_PAGE") {
     return inspectRecruitmentFlow({});
   }
@@ -69,10 +70,11 @@ async function deepScanJobList(profile) {
   await selectOfficialPositionType(profile);
   const searchInput = findOfficialSearchInput();
   const searchTerms = searchInput ? buildOfficialSearchTerms(profile).slice(0, 3) : [];
+  const verifiedSearchTerms = [];
 
   if (searchTerms.length) {
     for (const term of searchTerms) {
-      await runOfficialKeywordSearch(searchInput, term);
+      if (await runOfficialKeywordSearch(searchInput, term)) verifiedSearchTerms.push(term);
       await collectOfficialJobPages(profile, collected);
       if (collected.size >= 30) break;
     }
@@ -91,7 +93,9 @@ async function deepScanJobList(profile) {
     recommendedUrl: getRecommendedJobListUrl(profile),
     officialFilters: {
       positionType: String(profile.positionType || ""),
-      keywords: searchTerms
+      keywords: searchTerms,
+      verifiedKeywords: verifiedSearchTerms,
+      searchVerified: !searchTerms.length || verifiedSearchTerms.length > 0
     }
   };
 }
@@ -414,6 +418,22 @@ async function selectOfficialPositionType(profile) {
     ? /^(实习生|实习|interns?)$/i
     : (/校园|校招|应届|graduate|campus/i.test(profile.positionType || "") ? /^(应届生|校园招聘|校招|graduate|campus)$/i : null);
   if (!desired) return false;
+  if (location.hostname === "join.qq.com") {
+    const labels = [...document.querySelectorAll("label")].filter(isVisible);
+    const wanted = /实习|intern/i.test(profile.positionType || "") ? ["应届实习", "日常实习"] : ["2027校园招聘"];
+    let changed = false;
+    for (const text of wanted) {
+      const label = labels.find((item) => String(item.innerText || item.textContent || "").replace(/\s+/g, " ").trim() === text);
+      const checkbox = label?.querySelector("input[type='checkbox']");
+      if (label && !checkbox?.checked && !label.classList.contains("is-checked")) {
+        const before = jobPageSignature();
+        label.click();
+        await waitForJobListChange(before);
+        changed = true;
+      }
+    }
+    return changed;
+  }
   const control = [...document.querySelectorAll("label[role='radio'], [role='radio'], button, label")]
     .find((element) => isVisible(element) && desired.test(String(element.innerText || element.textContent || "").replace(/\s+/g, " ").trim()));
   if (!control || control.getAttribute("aria-checked") === "true" || control.classList.contains("is-active")) return false;
@@ -455,7 +475,9 @@ function inspectRecruitmentFlow(profile = {}) {
   const searchButton = findOfficialSearchButton(searchInput);
   const scannedCandidates = scanJobList(profile);
   const directJobLinks = scannedCandidates.filter((item) => !item.clickToken).length;
-  const clickCards = scannedCandidates.filter((item) => item.clickToken).length;
+  // 流程识别应判断官网是否存在可点击岗位卡，而不是要求卡片先通过本轮岗位关键词评分。
+  // 否则“有岗位列表但当前词未命中”会被错误识别成没有详情入口。
+  const clickCards = Math.max(scannedCandidates.filter((item) => item.clickToken).length, findClickableJobCards().length);
   const embeddedFrame = [...document.querySelectorAll("iframe[src]")]
     .find((frame) => isVisible(frame) && /(job|career|recruit|position|vacanc|apply|ats|workday|greenhouse|lever)/i.test(frame.src || ""));
   const applicationEntries = [...document.querySelectorAll("a[href], button, [role='button'], input[type='button']")]
@@ -506,7 +528,11 @@ function buildOfficialSearchTerms(profile) {
   const raw = String(profile.targetRole || "").replace(/(实习生?|校园招聘|校招|应届生?)/gi, " ").replace(/\s+/g, " ").trim();
   if (!raw) return [];
   const terms = splitTerms(raw).slice(0, 3);
-  if (/前端|后端|全栈|客户端|java|javascript|软件/i.test(raw)) terms.push("软件开发工程师");
+  if (/前端/i.test(raw)) terms.push("前端");
+  if (/后端|后台|服务端/i.test(raw)) terms.push("后台");
+  if (/全栈/i.test(raw)) terms.push("全栈");
+  if (/客户端/i.test(raw)) terms.push("客户端");
+  if (/前端|后端|后台|全栈|客户端|java|javascript|软件/i.test(raw)) terms.push("软件开发工程师");
   if (/算法|机器学习|深度学习|ai|人工智能|大模型/i.test(raw)) terms.push("AI模型工程师", "算法工程师");
   if (/数据|分析/i.test(raw)) terms.push("数据工程师");
   return [...new Set([raw, ...terms].map((term) => term.trim()).filter((term) => term.length > 1))];
@@ -521,9 +547,14 @@ async function runOfficialKeywordSearch(input, term) {
   input.dispatchEvent(new Event("change", { bubbles: true }));
   // 很多官网（包括华为）把按钮放在输入框组件的兄弟节点，不能只在最近的
   // `.search-*` 容器里找。按“表单 → 上层区域 → 全页面”逐级扩大范围。
-  const searchButton = findOfficialSearchButton(input);
+  const tencentSearchButton = location.hostname === "join.qq.com" ? input.closest(".search_box")?.querySelector(".search_text") : null;
+  const searchButton = tencentSearchButton || findOfficialSearchButton(input);
   if (searchButton) searchButton.click();
-  else input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", bubbles: true }));
+  else {
+    for (const type of ["keydown", "keypress", "keyup"]) {
+      input.dispatchEvent(new KeyboardEvent(type, { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true }));
+    }
+  }
   let changed = await waitForJobListChange(before);
   // 某些 Vue/React 页面第一次只同步输入值；若没有任何列表变化，再用全页按钮重试一次。
   if (!changed) {
@@ -572,8 +603,10 @@ function currentJobPageNumber() {
 }
 
 function jobPageSignature() {
-  return findClickableJobCards().slice(0, 3).map((card) => normalizeClickSignature(extractCardJobTitle(card, card.innerText || ""))).join("|") ||
-    [...document.querySelectorAll("a[href]")].filter(isVisible).slice(0, 8).map((link) => `${link.href}|${link.innerText}`).join("|");
+  const countText = (document.body?.innerText || "").match(/共\s*\d+\s*(?:个岗位|条)/)?.[0] || "";
+  const cards = findClickableJobCards().slice(0, 3).map(cardClickSignature).join("|");
+  const links = [...document.querySelectorAll("a[href]")].filter(isVisible).slice(0, 8).map((link) => `${link.href}|${link.innerText}`).join("|");
+  return `${location.search}|${countText}|${cards || links}`;
 }
 
 async function clickJobPageNumber(number) {
@@ -686,7 +719,37 @@ function detectApplicationSuccess() {
 function detectLoginRequired() {
   const text = (document.body?.innerText || "").slice(0, 8000);
   const password = document.querySelector("input[type='password']");
-  return Boolean(password && /(登录|注册|验证码登录|sign in|log in)/i.test(text));
+  const accounts = loginAccountCandidates();
+  return Boolean((password && /(登录|注册|验证码登录|sign in|log in)/i.test(text)) || (accounts.length && /(选择账号|账号登录|使用.*账号|choose.*account)/i.test(text)));
+}
+
+function loginAccountCandidates() {
+  const selector = "[data-account-id], [class*='account-item'], [class*='account_item'], [class*='user-card'], [class*='user_item']";
+  return [...document.querySelectorAll(selector)]
+    .filter(isVisible)
+    .filter((item) => {
+      const text = String(item.innerText || item.textContent || "").replace(/\s+/g, " ").trim();
+      return text && !/(添加账号|其他账号|使用其他|add account|other account)/i.test(text);
+    });
+}
+
+async function tryAutoLogin() {
+  const accounts = loginAccountCandidates();
+  if (accounts.length > 1) return { status: "multiple_accounts", accountCount: accounts.length };
+  if (accounts.length === 1) {
+    accounts[0].click();
+    return { status: "account_selected" };
+  }
+  const passwordFields = [...document.querySelectorAll("input[type='password']")].filter(isVisible);
+  const hasAutofilledPassword = passwordFields.some((field) => Boolean(field.value));
+  const loginButton = [...document.querySelectorAll("button, [role='button'], input[type='submit']")]
+    .filter(isVisible)
+    .find((node) => /^(登录|立即登录|登录并继续|sign in|log in|continue)$/i.test(String(node.innerText || node.value || node.getAttribute("aria-label") || "").replace(/\s+/g, " ").trim()));
+  if (hasAutofilledPassword && loginButton && !loginButton.disabled) {
+    loginButton.click();
+    return { status: "submitted_saved_credentials" };
+  }
+  return { status: passwordFields.length ? "credentials_needed" : "not_ready" };
 }
 
 function canonicalPageUrl(value) {
@@ -746,9 +809,9 @@ function scanJobList(profile) {
   for (const [index, card] of clickCards.entries()) {
     const text = String(card.innerText || card.textContent || "").replace(/\s+/g, " ").trim();
     const title = extractCardJobTitle(card, text);
-    const signature = normalizeClickSignature(title);
+    const signature = cardClickSignature(card);
     if (!signature || text.length < 4 || text.length > 1000 || !looksLikeJob(text, location.href, roleTerms, positionType, skillTerms)) continue;
-    if (candidates.some((item) => normalizeClickSignature(item.title) === signature)) continue;
+    if (candidates.some((item) => item.clickToken === signature)) continue;
 
     const companyEval = ResumePilotScoring.evaluateCompany(`${document.title} ${text}`, location.href, profile);
     const jobEval = ResumePilotScoring.evaluateJob(text, location.href, profile);
@@ -785,7 +848,7 @@ function scanJobList(profile) {
 
 function findClickableJobCards() {
   const selectors = [
-    ".job-item", ".position-item", ".job-card", ".position-card",
+    ".job-item", ".position-item", ".job-card", ".position-card", ".post_box",
     "[class*='job-list'] > li", "[class*='position-list'] > li",
     "[class*='vacancy']", "[class*='opening']", "[class*='recruit'] [class*='item']",
     "[data-job-id]", "[data-position-id]", "[data-jobid]", "[data-positionid]"
@@ -797,8 +860,13 @@ function findClickableJobCards() {
 }
 
 function extractCardJobTitle(card, fallback) {
-  const heading = card.querySelector(".job-name, .position-name, [class*='job-name'], [class*='position-name'], h1, h2, h3, h4, [class*='title']")?.innerText;
+  const heading = card.querySelector(".job-name, .position-name, .post_title, [class*='job-name'], [class*='position-name'], h1, h2, h3, h4, [class*='title']")?.innerText;
   return String(heading || fallback).replace(/\s+/g, " ").trim().slice(0, 120);
+}
+
+function cardClickSignature(card) {
+  const value = card.matches?.(".post_box") ? (card.innerText || card.textContent || "") : extractCardJobTitle(card, card.innerText || "");
+  return normalizeClickSignature(value);
 }
 
 function normalizeClickSignature(value) {
@@ -820,18 +888,18 @@ async function openScannedJob(clickToken, searchTerm = "") {
   const searchInput = findOfficialSearchInput();
   if (searchInput && searchInput.value !== searchTerm) await runOfficialKeywordSearch(searchInput, searchTerm);
   let cards = findClickableJobCards();
-  let target = cards.find((card) => normalizeClickSignature(extractCardJobTitle(card, card.innerText || "")) === clickToken);
+  let target = cards.find((card) => cardClickSignature(card) === clickToken);
   // 输入框可能已经显示关键词，但官网状态仍是旧列表。找不到目标时强制再次触发官网搜索。
   if (!target && searchInput && searchTerm) {
     await runOfficialKeywordSearch(searchInput, searchTerm);
     cards = findClickableJobCards();
-    target = cards.find((card) => normalizeClickSignature(extractCardJobTitle(card, card.innerText || "")) === clickToken);
+    target = cards.find((card) => cardClickSignature(card) === clickToken);
   }
   if (!target && pagerItems().length > 1) {
     if (currentJobPageNumber() !== 1) await clickJobPageNumber(1);
     for (let attempt = 0; attempt < 8 && !target; attempt += 1) {
       cards = findClickableJobCards();
-      target = cards.find((card) => normalizeClickSignature(extractCardJobTitle(card, card.innerText || "")) === clickToken);
+      target = cards.find((card) => cardClickSignature(card) === clickToken);
       if (!target && !(await moveToNextJobPage())) break;
     }
   }

@@ -5,7 +5,7 @@
       aliases: ["Tencent"],
       domains: ["jobs.tencent.com", "careers.tencent.com", "join.qq.com"],
       careerUrl: "https://jobs.tencent.com/",
-      jobListUrls: { campus: "https://join.qq.com/", intern: "https://join.qq.com/" },
+      jobListUrls: { campus: "https://join.qq.com/post.html", intern: "https://join.qq.com/post.html" },
       tags: ["互联网", "游戏", "云计算", "人工智能"],
       dimensions: { stability: 90, growth: 82, student: 88, transparency: 90 },
       evidence: [

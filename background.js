@@ -499,7 +499,9 @@ async function autoScanStage(tabId) {
     autopilotState.roleIndex += 1;
     autopilotState.currentRole = autopilotState.rolePlan[autopilotState.roleIndex];
     const eligibleCount = (autopilotState.roleResults || []).filter((item) => !item.hardBlocked && (item.skillEligible || item.jobScore >= minimum)).length;
-    autopilotState.lastMessage = `${autopilotState.currentCompany.company} 已收集 ${eligibleCount} 个技能匹配岗位，继续搜索：${autopilotState.currentRole.role}`;
+    const verified = response.officialFilters?.verifiedKeywords || [];
+    const searchStatus = verified.length ? `官网已实际筛选“${verified.join("、")}”` : "已扫描官网岗位列表";
+    autopilotState.lastMessage = `${autopilotState.currentCompany.company}${searchStatus}，已收集 ${eligibleCount} 个技能匹配岗位；继续搜索：${autopilotState.currentRole.role}`;
     await persistAutopilot();
     scheduleAutoStep(tabId, 350);
     return;
@@ -519,7 +521,21 @@ async function autoScanStage(tabId) {
     autopilotState.jobQueue = queue.slice(0, remaining);
     autopilotState.jobQueueIndex = 0;
     const first = autopilotState.jobQueue[0];
-    return openAutoCandidate(tabId, first, `全部方向搜索完成；${autopilotState.currentCompany.company} 共找到 ${autopilotState.jobQueue.length} 个匹配岗位，先投：${first.title}`);
+    const verifiedSearch = first.officialSearchTerm ? `官网已实际搜索“${first.officialSearchTerm}”；` : "";
+    return openAutoCandidate(tabId, first, `全部方向搜索完成；${verifiedSearch}${autopilotState.currentCompany.company} 共找到 ${autopilotState.jobQueue.length} 个匹配岗位，先投：${first.title}`);
+  }
+
+  const attemptedKeywords = response.officialFilters?.keywords || [];
+  const searchUnverified = attemptedKeywords.length > 0 && response.officialFilters?.searchVerified === false;
+  const entryUnverified = !["direct_link", "click_card"].includes(flow.openMethod);
+  if (searchUnverified || flow.pageType !== "list" || entryUnverified) {
+    const missing = [
+      searchUnverified ? "官网搜索没有确认生效" : "",
+      flow.pageType !== "list" ? "尚未确认岗位列表" : "",
+      entryUnverified ? "尚未确认岗位卡进入详情的方式" : ""
+    ].filter(Boolean).join("、");
+    autopilotState.resumeStage = "scan";
+    return pauseAutopilot("waiting_site_flow", `${autopilotState.currentCompany.company} 的投递流程尚未验证完整（${missing}），已暂停而不是跳过；请检查页面后点击“处理后继续”`);
   }
 
   autopilotState.skipped += 1;
@@ -533,6 +549,7 @@ async function openAutoCandidate(tabId, candidate, message = "") {
   autopilotState.stage = "job";
   autopilotState.resumeStage = "job";
   autopilotState.jobOpenChecks = 0;
+  autopilotState.loginAttempts = 0;
   autopilotState.lastMessage = message || `已选择：${candidate.title}（方向：${candidate.matchedRole || "简历匹配"}）`;
   await persistAutopilot();
   if (candidate.clickToken) {
@@ -571,7 +588,7 @@ async function autoJobStage(tabId) {
   if (!(await ensureCurrentPageScripts(tabId))) return;
   const pageState = await sendTabMessage(tabId, { type: "CHECK_APPLICATION_PAGE" });
   if (pageState.captcha) return handleCaptcha("岗位详情页出现验证码");
-  if (pageState.login) return pauseAutopilot("waiting_login", "需要登录招聘网站；登录后点击继续");
+  if (pageState.login) return attemptAutoLogin(tabId, "岗位详情页需要登录");
   // 动态卡片打开详情可能跨标签或由 SPA 延迟渲染。仍停留在岗位列表时先等待，
   // 不要立刻把列表页误判成“详情页缺少申请按钮”。
   const stillOnList = (pageState.pageType === "list" || /job-list|position-list|jobs(?:\?|$)|positions(?:\?|$)/i.test(pageState.url || "")) && !pageState.formPresent;
@@ -598,7 +615,7 @@ async function autoJobStage(tabId) {
   }
   const response = await sendTabMessage(tabId, { type: "OPEN_APPLICATION" });
   if (response.captcha) return handleCaptcha("岗位详情页出现验证码");
-  if (response.login) return pauseAutopilot("waiting_login", "需要登录招聘网站；登录后点击继续");
+  if (response.login) return attemptAutoLogin(tabId, "打开投递入口后需要登录");
   if (!response.clicked && !response.formPresent) {
     return pauseAutopilot("application_entry_missing", "已进入职位详情，但未找到可靠的“申请/投递”入口，需要人工确认");
   }
@@ -664,7 +681,7 @@ async function autoApplyStage(tabId) {
     profile: autopilotState.profile,
     resumeFile
   });
-  if (response.login) return pauseAutopilot("waiting_login", "需要登录招聘网站；登录后点击继续");
+  if (response.login) return attemptAutoLogin(tabId, "填写申请前需要登录");
   if (response.captcha) return handleCaptcha("申请表出现验证码");
   if (!response.formPresent) {
     autopilotState.stage = "job";
@@ -704,6 +721,34 @@ async function handleCaptcha(message) {
   }
   autopilotState.resumeStage = autopilotState.stage;
   return pauseAutopilot("waiting_captcha", `${message}；完成验证码后点击继续`);
+}
+
+async function attemptAutoLogin(tabId, reason) {
+  const attempts = Number(autopilotState.loginAttempts || 0);
+  const response = await sendTabMessage(tabId, { type: "TRY_AUTO_LOGIN" });
+  if (["account_selected", "submitted_saved_credentials"].includes(response.status)) {
+    autopilotState.loginAttempts = attempts + 1;
+    autopilotState.lastMessage = response.status === "account_selected"
+      ? `${reason}；已选择唯一的已保存账号，正在继续登录`
+      : `${reason}；浏览器已填好账号信息，正在自动登录`;
+    await persistAutopilot();
+    scheduleAutoStep(tabId, 1600);
+    return;
+  }
+  if (response.status === "multiple_accounts") {
+    autopilotState.resumeStage = autopilotState.stage;
+    return pauseAutopilot("waiting_account_choice", `检测到 ${response.accountCount} 个可用账号；请在官网选择要登录的账号，然后点击“处理后继续”`);
+  }
+  // 浏览器密码管理器可能比登录页晚一拍完成自动填充，先短暂重试一次。
+  if (response.status === "credentials_needed" && attempts < 1) {
+    autopilotState.loginAttempts = attempts + 1;
+    autopilotState.lastMessage = `${reason}；正在等待浏览器填入已保存账号`;
+    await persistAutopilot();
+    scheduleAutoStep(tabId, 1000);
+    return;
+  }
+  autopilotState.resumeStage = autopilotState.stage;
+  return pauseAutopilot("waiting_login", `${reason}；没有可自动使用的单一账号，请手动登录后点击“处理后继续”`);
 }
 
 async function pauseAutopilot(status, message) {
