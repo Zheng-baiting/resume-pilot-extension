@@ -538,11 +538,16 @@ async function autoJobStage(tabId) {
   // 动态卡片打开详情可能跨标签或由 SPA 延迟渲染。仍停留在岗位列表时先等待，
   // 不要立刻把列表页误判成“详情页缺少申请按钮”。
   const stillOnList = (pageState.pageType === "list" || /job-list|position-list|jobs(?:\?|$)|positions(?:\?|$)/i.test(pageState.url || "")) && !pageState.formPresent;
-  if (stillOnList && Number(autopilotState.jobOpenChecks || 0) < 4) {
-    autopilotState.jobOpenChecks = Number(autopilotState.jobOpenChecks || 0) + 1;
-    autopilotState.lastMessage = `正在进入岗位详情（${autopilotState.jobOpenChecks}/4）`;
+  if (stillOnList) {
+    const checks = Number(autopilotState.jobOpenChecks || 0);
+    if (checks >= 4) {
+      return pauseAutopilot("waiting_job_open", "官网仍停留在岗位列表：岗位卡片未能打开，需要人工确认");
+    }
+    autopilotState.jobOpenChecks = checks + 1;
+    autopilotState.lastMessage = `岗位卡片尚未打开，正在兼容重试（${autopilotState.jobOpenChecks}/4）`;
     await persistAutopilot();
-    scheduleAutoStep(tabId, 900);
+    await retryOpenCurrentCandidate(tabId, autopilotState.jobOpenChecks);
+    scheduleAutoStep(autopilotState.tabId || tabId, 1200);
     return;
   }
   autopilotState.jobOpenChecks = 0;
@@ -557,6 +562,26 @@ async function autoJobStage(tabId) {
   autopilotState.lastMessage = response.formPresent ? "申请表已打开，准备填写" : "已点击申请，等待申请表加载";
   await persistAutopilot();
   scheduleAutoStep(tabId, response.clicked ? 2200 : 300);
+}
+
+async function retryOpenCurrentCandidate(tabId, attempt) {
+  const candidate = autopilotState.currentJob || {};
+  if (!candidate.clickToken) return false;
+  // 第一次沿用隔离脚本；后续在网页主世界重新定位真实卡片，兼容 Vue/React
+  // 把事件处理器挂在主页面对象上的招聘官网。
+  if (attempt === 1) {
+    const response = await sendTabMessage(tabId, {
+      type: "OPEN_SCANNED_JOB",
+      clickToken: candidate.clickToken,
+      searchTerm: candidate.officialSearchTerm || ""
+    }).catch(() => null);
+    return Boolean(response?.clicked);
+  }
+  const response = await sendTabMessage(tabId, {
+    type: "OPEN_SCANNED_JOB_MAIN",
+    clickToken: candidate.clickToken
+  }).catch(() => null);
+  return Boolean(response?.clicked);
 }
 
 async function autoApplyStage(tabId) {

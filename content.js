@@ -25,6 +25,7 @@ async function handleMessage(message) {
   if (message?.type === "SCAN_JOB_LIST") return deepScanJobList(message.profile || {});
   if (message?.type === "INSPECT_RECRUITMENT_FLOW") return inspectRecruitmentFlow(message.profile || {});
   if (message?.type === "OPEN_SCANNED_JOB") return openScannedJob(message.clickToken || "", message.searchTerm || "");
+  if (message?.type === "OPEN_SCANNED_JOB_MAIN") return requestMainWorldJobClick(message.clickToken || "");
   if (message?.type === "CLICK_JOB_ENTRANCE") return clickJobEntrance(message.index || 0);
   if (message?.type === "OPEN_APPLICATION") return openApplication();
   if (message?.type === "CHECK_APPLICATION_PAGE") {
@@ -479,6 +480,17 @@ function extractCardJobTitle(card, fallback) {
 
 function normalizeClickSignature(value) {
   return String(value || "").toLowerCase().replace(/[\s|｜·—_\-（）()【】\[\]，,。.:：;/\\]/g, "").slice(0, 80);
+}
+
+function requestMainWorldJobClick(clickToken) {
+  const root = document.documentElement;
+  root.setAttribute("data-resume-pilot-click-token", clickToken);
+  root.removeAttribute("data-resume-pilot-click-result");
+  document.dispatchEvent(new Event("resume-pilot-open-job-main"));
+  const result = root.getAttribute("data-resume-pilot-click-result") || "listener_missing";
+  root.removeAttribute("data-resume-pilot-click-token");
+  root.removeAttribute("data-resume-pilot-click-result");
+  return { clicked: result === "clicked", result };
 }
 
 async function openScannedJob(clickToken, searchTerm = "") {
