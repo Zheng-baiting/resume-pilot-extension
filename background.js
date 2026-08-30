@@ -453,7 +453,7 @@ async function autoScanStage(tabId) {
   const roleProfile = { ...autopilotState.profile, targetRole: role.role };
   // 每个公司、每次进入新的招聘页面都先识别流程，再开始找岗位。
   // 这样后续动作依据页面能力选择，而不是假设所有官网都和某一家相同。
-  const flow = await sendTabMessage(tabId, { type: "INSPECT_RECRUITMENT_FLOW", profile: roleProfile });
+  let flow = await sendTabMessage(tabId, { type: "INSPECT_RECRUITMENT_FLOW", profile: roleProfile });
   autopilotState.siteFlow = flow;
   autopilotState.lastMessage = `已识别 ${autopilotState.currentCompany.company} 流程：${flow.summary || "使用通用探测"}；正在搜索 ${role.role}`;
   await persistAutopilot();
@@ -466,6 +466,14 @@ async function autoScanStage(tabId) {
     return;
   }
   const response = await sendTabMessage(tabId, { type: "SCAN_JOB_LIST", profile: roleProfile });
+  // SPA 招聘页经常在 document_idle 之后才异步渲染岗位。初次探测可能只看到
+  // 搜索框；完成官网筛选和翻页后必须重新取证，不能用加载早期的结果判死刑。
+  const postScanFlow = await sendTabMessage(tabId, { type: "INSPECT_RECRUITMENT_FLOW", profile: roleProfile });
+  if (postScanFlow) {
+    flow = postScanFlow;
+    autopilotState.siteFlow = postScanFlow;
+    await persistAutopilot();
+  }
   const { applicationHistory = [] } = await chrome.storage.local.get("applicationHistory");
   const appliedUrls = new Set(applicationHistory.map((item) => item.url));
 
@@ -664,6 +672,18 @@ async function autoJobStage(tabId) {
     const opened = await sendTabMessage(tabId, { type: "OPEN_APPLICATION" });
     if (!opened.clicked) return pauseAutopilot("waiting_resume_creation", "官网要求先创建站内简历，但未能可靠进入创建页面");
     return startResumeCreation(tabId, "官网要求先创建站内简历，正在进入创建页面");
+  }
+  const detailUrlSignal = /(?:\/campus\/position\/[^/?#]+\/detail|post_detail|job[-_/]?detail|position[-_/]?detail|\/jobs?\/[^/?#]+|\/positions?\/[^/?#]+)/i.test(pageState.url || "")
+    && !/(job-list|position-list|\/campus\/position\/?(?:\?|$)|\/jobs?\/?(?:\?|$)|\/positions?\/?(?:\?|$))/i.test(pageState.url || "");
+  if (pageState.pageType === "unknown" && detailUrlSignal) {
+    const checks = Number(autopilotState.jobOpenChecks || 0);
+    if (checks < 7) {
+      autopilotState.jobOpenChecks = checks + 1;
+      autopilotState.lastMessage = `已进入岗位详情地址，等待官网异步加载职责和投递入口（${autopilotState.jobOpenChecks}/7）`;
+      await persistAutopilot();
+      scheduleAutoStep(tabId, 900);
+      return;
+    }
   }
   // 动态卡片打开详情可能跨标签或由 SPA 延迟渲染。仍停留在岗位列表时先等待，
   // 不要立刻把列表页误判成“详情页缺少申请按钮”。

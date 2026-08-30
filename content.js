@@ -12,7 +12,9 @@ const FIELD_RULES = [
   { key: "targetCity", patterns: [/期望.*城市|意向.*地点|工作.*地点|desired.*location|preferred.*city/i] },
   { key: "resumeText", patterns: [/个人.*总结|自我.*评价|个人.*简介|summary|profile/i] }
 ];
-const CONTENT_SCRIPT_VERSION = "0.10.0";
+const CONTENT_SCRIPT_VERSION = "0.11.0";
+const MAX_COLLECTED_JOBS = 200;
+const MAX_JOB_PAGES = 20;
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   handleMessage(message)
@@ -83,7 +85,9 @@ async function deepScanJobList(profile) {
     for (const term of searchTerms) {
       if (await runOfficialKeywordSearch(searchInput, term)) verifiedSearchTerms.push(term);
       await collectOfficialJobPages(profile, collected);
-      if (collected.size >= 30) break;
+      // 不要因为第一个宽泛关键词已经收集到 30 条就停止。不同关键词常常对应
+      // 完全不同的岗位池；继续验证剩余关键词，直到总上限真正达到。
+      if (collected.size >= MAX_COLLECTED_JOBS) break;
     }
     // 无论关键词是否已有结果，都清空关键词并完整翻页一次。这样岗位标题不完全匹配，
     // 但卡片内容命中简历技能的岗位也不会被漏掉。
@@ -95,7 +99,7 @@ async function deepScanJobList(profile) {
   }
 
   return {
-    results: [...collected.values()].sort((a, b) => b.score - a.score).slice(0, 80),
+    results: [...collected.values()].sort((a, b) => b.score - a.score).slice(0, MAX_COLLECTED_JOBS),
     entrances: discoverJobEntrances(),
     recommendedUrl: getRecommendedJobListUrl(profile),
     officialFilters: {
@@ -402,8 +406,9 @@ function stripHtml(value) {
 
 async function collectOfficialJobPages(profile, collected) {
   if (pagerItems().length > 1 && currentJobPageNumber() !== 1) await clickJobPageNumber(1);
-  // 同时支持无限滚动和传统分页。最多读取 8 页/80 个岗位，避免异常页面无限循环。
-  for (let pageRound = 0; pageRound < 8; pageRound += 1) {
+  // 同时支持无限滚动和传统分页。对官网关键词结果最多读取 20 页/200 个岗位，
+  // 既覆盖常见的多页结果，也避免异常页面无限循环。
+  for (let pageRound = 0; pageRound < MAX_JOB_PAGES; pageRound += 1) {
     let unchangedRounds = 0;
     let lastHeight = 0;
     for (let scrollRound = 0; scrollRound < 6; scrollRound += 1) {
@@ -412,11 +417,11 @@ async function collectOfficialJobPages(profile, collected) {
       if (height === lastHeight) unchangedRounds += 1;
       else unchangedRounds = 0;
       lastHeight = height;
-      if (collected.size >= 80 || unchangedRounds >= 2) break;
+      if (collected.size >= MAX_COLLECTED_JOBS || unchangedRounds >= 2) break;
       window.scrollTo({ top: Math.min(height, window.scrollY + Math.max(window.innerHeight * 0.85, 650)), behavior: "instant" });
       await wait(500);
     }
-    if (collected.size >= 80 || !(await moveToNextJobPage())) break;
+    if (collected.size >= MAX_COLLECTED_JOBS || !(await moveToNextJobPage())) break;
   }
 }
 
@@ -425,6 +430,25 @@ async function selectOfficialPositionType(profile) {
     ? /^(实习生|实习|interns?)$/i
     : (/校园|校招|应届|graduate|campus/i.test(profile.positionType || "") ? /^(应届生|校园招聘|校招|graduate|campus)$/i : null);
   if (!desired) return false;
+  if (location.hostname === "jobs.bytedance.com") {
+    const wanted = /实习|intern/i.test(profile.positionType || "") ? "实习" : "正式";
+    const labels = [...document.querySelectorAll("[data-cy-value], [role='treeitem']")];
+    const label = labels.find((element) => {
+      const ownValue = element.getAttribute?.("data-cy-value");
+      const ownText = ownValue || (element.matches?.("[role='treeitem']")
+        ? element.querySelector(":scope > .atsx-tree-node-content-wrapper [data-cy-value], :scope > .atsx-tree-node-content-wrapper")?.textContent
+        : element.textContent);
+      return String(ownText || "").replace(/\s+/g, " ").trim() === wanted;
+    });
+    const treeItem = label?.closest?.("[role='treeitem']") || (label?.matches?.("[role='treeitem']") ? label : null);
+    const checkbox = treeItem?.querySelector(":scope > .atsx-tree-checkbox, :scope > [role='checkbox']");
+    const checked = checkbox?.getAttribute("aria-checked") === "true"
+      || /checkbox-(?:checked|indeterminate)/i.test(String(checkbox?.className || ""));
+    if (!checkbox || checked) return false;
+    const before = jobPageSignature();
+    checkbox.click();
+    return waitForJobListChange(before);
+  }
   if (location.hostname === "join.qq.com") {
     const labels = [...document.querySelectorAll("label")].filter(isVisible);
     const wanted = /实习|intern/i.test(profile.positionType || "") ? ["应届实习", "日常实习"] : ["2027校园招聘"];
@@ -543,6 +567,30 @@ function getRecruitmentSiteAdapter() {
       limitation: "官网同一阶段可能只允许保留一个岗位；更换既有申请必须暂停确认"
     };
   }
+  if (location.hostname === "jobs.bytedance.com") {
+    return {
+      id: "bytedance-campus",
+      name: "字节跳动校园招聘",
+      verified: true,
+      filterMethod: "招聘项目/职位类别/地点复选框 + 官网关键词回车（验证 URL 与结果变化）",
+      listMethod: "/campus/position/{id}/detail 真实链接 + 编号分页",
+      detailPattern: "/campus/position/{id}/detail",
+      applicationMethod: "岗位详情→投递→登录→/resume/{id}/apply"
+    };
+  }
+  const ats = detectRecruitmentPlatform();
+  if (ats) {
+    return {
+      id: ats.id,
+      name: ats.name,
+      verified: false,
+      filterMethod: `${ats.name} 搜索/筛选控件（每次验证结果变化）`,
+      listMethod: `${ats.detailPattern}；优先真实链接，缺失时才点击岗位卡`,
+      detailPattern: ats.detailPattern,
+      applicationMethod: `${ats.applyPattern}；随后识别登录、简历和必填表单`,
+      platformKnown: true
+    };
+  }
   return {
     id: "generic-discovery",
     name: location.hostname,
@@ -552,6 +600,61 @@ function getRecruitmentSiteAdapter() {
     detailPattern: "由页面实测确认",
     applicationMethod: "详情页识别登录、验证码、申请入口和表单"
   };
+}
+
+function detectRecruitmentPlatform() {
+  const host = location.hostname.toLowerCase();
+  const url = location.href.toLowerCase();
+  if (/myworkdayjobs\.com$|workdayjobs\.com$/.test(host) || /\/wday\/cxs\//.test(url)) {
+    return { id: "ats-workday", name: "Workday", detailPattern: "职位列表→/job/…详情", applyPattern: "详情→Apply/立即申请→候选人账户" };
+  }
+  if (/greenhouse\.io$/.test(host)) {
+    return { id: "ats-greenhouse", name: "Greenhouse", detailPattern: "岗位链接→/jobs/{id}", applyPattern: "详情→Apply for this job→申请表" };
+  }
+  if (/lever\.co$/.test(host)) {
+    return { id: "ats-lever", name: "Lever", detailPattern: "岗位链接→/{company}/{posting-id}", applyPattern: "详情→/apply 托管申请表" };
+  }
+  if (/smartrecruiters\.com$/.test(host)) {
+    return { id: "ats-smartrecruiters", name: "SmartRecruiters", detailPattern: "职位链接→公司/职位 ID 详情", applyPattern: "详情→I'm interested/Apply→申请表" };
+  }
+  if (/ashbyhq\.com$/.test(host)) {
+    return { id: "ats-ashby", name: "Ashby", detailPattern: "岗位链接→/{company}/{posting-id}", applyPattern: "详情→Apply→申请表" };
+  }
+  if (/mokahr\.com$|moka\.hr$/.test(host)) {
+    return { id: "ats-moka", name: "Moka", detailPattern: "职位列表→岗位 ID 详情", applyPattern: "详情→申请职位→登录/简历表" };
+  }
+  return null;
+}
+
+function findDirectJobLinks() {
+  const detailUrlPattern = /(?:\/campus\/position\/[^/?#]+\/detail|\/(?:job|jobs|position|positions|posting|postings)\/[^/?#]+(?:\/detail)?|\/careers?\/(?:job|position)\/[^/?#]+|[?&](?:job_?id|position_?id|postid|advertisementid)=)/i;
+  const listUrlPattern = /(?:job-list|position-list|\/campus\/position\/?$|\/(?:jobs?|positions?|careers?)\/?$)/i;
+  const platform = detectRecruitmentPlatform();
+  return [...document.querySelectorAll("a[href]")]
+    .filter(isVisible)
+    .filter((link) => {
+      let url = "";
+      try { url = new URL(link.href, location.href).href; } catch { return false; }
+      const parsed = new URL(url);
+      if (!/^https?:/i.test(url) || listUrlPattern.test(parsed.pathname)) return false;
+      const text = String(link.innerText || link.textContent || link.getAttribute("aria-label") || "").replace(/\s+/g, " ").trim();
+      const segments = parsed.pathname.split("/").filter(Boolean);
+      const platformSpecific = Boolean(platform && (
+        (["ats-lever", "ats-ashby", "ats-smartrecruiters"].includes(platform.id) && segments.length >= 2)
+        || (platform.id === "ats-greenhouse" && /\/jobs?\//i.test(parsed.pathname))
+        || (platform.id === "ats-workday" && /\/job\//i.test(parsed.pathname))
+        || (platform.id === "ats-moka" && /(?:job|position|post|recruit)/i.test(url))
+      ));
+      return text.length >= 4 && (detailUrlPattern.test(url) || platformSpecific)
+        && /(职位|岗位|实习|校招|应届|工程师|开发|产品|运营|设计|算法|测试|job|position|intern|engineer|developer)/i.test(`${text} ${url}`);
+    });
+}
+
+function findApplicationEntries() {
+  const pattern = /^(申请|投递|立即申请|立即投递|申请职位|投递简历|投递该职位|开始申请|提交申请|apply|apply now|apply for|apply this job|start application|start your application|i['’]?m interested)$/i;
+  return [...document.querySelectorAll("a[href], button, [role='button'], input[type='button'], input[type='submit']")]
+    .filter(isVisible)
+    .filter((node) => pattern.test(String(node.innerText || node.value || node.textContent || node.getAttribute("aria-label") || "").replace(/\s+/g, " ").trim()));
 }
 
 function isResumeCreationPage() {
@@ -575,15 +678,15 @@ function inspectRecruitmentFlow(profile = {}) {
   const searchInput = findOfficialSearchInput();
   const searchButton = findOfficialSearchButton(searchInput);
   const scannedCandidates = scanJobList(profile);
-  const directJobLinks = scannedCandidates.filter((item) => !item.clickToken).length;
+  // 入口能力必须与本轮关键词匹配解耦：第一页没有命中目标岗位时，官网仍然可能
+  // 存在完全可靠的详情链接。字节卡住正是因为旧逻辑把两件事混为一谈。
+  const directJobLinks = findDirectJobLinks().length;
   // 流程识别应判断官网是否存在可点击岗位卡，而不是要求卡片先通过本轮岗位关键词评分。
   // 否则“有岗位列表但当前词未命中”会被错误识别成没有详情入口。
   const clickCards = Math.max(scannedCandidates.filter((item) => item.clickToken).length, findClickableJobCards().length);
   const embeddedFrame = [...document.querySelectorAll("iframe[src]")]
     .find((frame) => isVisible(frame) && /(job|career|recruit|position|vacanc|apply|ats|workday|greenhouse|lever)/i.test(frame.src || ""));
-  const applicationEntries = [...document.querySelectorAll("a[href], button, [role='button'], input[type='button']")]
-    .filter(isVisible)
-    .filter((node) => /^(申请|投递|立即申请|立即投递|申请职位|投递简历|投递该职位|开始申请|apply|apply now|apply for|apply this job)$/i.test(String(node.innerText || node.value || node.getAttribute("aria-label") || "").replace(/\s+/g, " ").trim()));
+  const applicationEntries = findApplicationEntries();
   const entrances = discoverJobEntrances();
   let pageType = "unknown";
   if (login) pageType = "login";
@@ -632,9 +735,16 @@ function inspectRecruitmentFlow(profile = {}) {
     applicationConflict: Boolean(applicationConflict),
     applicationConflictText: applicationConflict?.text || "",
     siteAdapter,
+    flowEvidence: {
+      searchControl: Boolean(searchInput),
+      directJobLinks,
+      clickCards,
+      pagination,
+      applicationEntries: applicationEntries.length
+    },
     summary: siteAdapter.verified
       ? `${siteAdapter.name}：${siteAdapter.filterMethod}→${siteAdapter.listMethod}→${siteAdapter.applicationMethod}`
-      : summaryMap[pageType]
+      : `${siteAdapter.platformKnown ? `${siteAdapter.name}；` : ""}${summaryMap[pageType]}`
   };
 }
 
@@ -691,11 +801,13 @@ async function waitForJobListChange(before) {
 }
 
 function findPagerContainer() {
-  const specific = document.querySelector(".aui-pager, .pagination, [class*='pagination']");
+  const numericItemCount = (element) => [...element.querySelectorAll("li, button, a, [role='button']")]
+    .filter((item) => /^\d+$/.test(String(item.innerText || item.textContent || "").trim())).length;
+  const specific = [...document.querySelectorAll(".aui-pager, .pagination, [class*='pagination']")]
+    .find((element) => numericItemCount(element) >= 2);
   if (specific) return specific;
   return [...document.querySelectorAll("[class*='pager']")].find((element) =>
-    [...element.querySelectorAll("li, button, a, [role='button']")]
-      .filter((item) => /^\d+$/.test(String(item.innerText || item.textContent || "").trim())).length >= 2
+    numericItemCount(element) >= 2
   ) || null;
 }
 
@@ -711,7 +823,7 @@ function pagerItems() {
 function currentJobPageNumber() {
   const items = pagerItems();
   const current = items.find(({ element }) =>
-    element.getAttribute("aria-current") === "page" || /(^|\s)is-active(\s|$)|(^|[-_])current($|[-_])|(^|[-_])selected($|[-_])/i.test(String(element.className || ""))
+    element.getAttribute("aria-current") === "page" || /(^|\s)is-active(\s|$)|(^|[-_])active($|[-_])|(^|[-_])current($|[-_])|(^|[-_])selected($|[-_])/i.test(String(element.className || ""))
   );
   return Number(current?.text || items[0]?.text || 1);
 }
@@ -805,9 +917,7 @@ async function openApplication() {
     setTimeout(() => existingContinuation.confirm.click(), 40);
     return { clicked: true, login: false, captcha: false, formPresent: false, continuingApplication: true };
   }
-  const candidates = [...document.querySelectorAll("a[href], button, [role='button'], input[type='button']")]
-    .filter(isVisible)
-    .filter((node) => /^(申请|投递|立即申请|立即投递|申请职位|投递简历|投递该职位|开始申请|apply|apply now|apply for|apply this job)$/i.test(String(node.innerText || node.value || node.getAttribute("aria-label") || "").replace(/\s+/g, " ").trim()));
+  const candidates = findApplicationEntries();
   const target = candidates[0];
   if (!target) return { clicked: false, login: false, captcha: false, formPresent: false };
   target.click();
@@ -934,7 +1044,8 @@ function detectLoginRequired() {
   const text = (document.body?.innerText || "").slice(0, 8000);
   const password = document.querySelector("input[type='password']");
   const accounts = loginAccountCandidates();
-  return Boolean((password && /(登录|注册|验证码登录|sign in|log in)/i.test(text)) || (accounts.length && /(选择账号|账号登录|使用.*账号|choose.*account)/i.test(text)));
+  const loginPath = /\/(?:login|signin|sign-in)(?:\/|$)/i.test(location.pathname);
+  return Boolean(loginPath || (password && /(登录|注册|验证码登录|sign in|log in)/i.test(text)) || (accounts.length && /(选择账号|账号登录|使用.*账号|choose.*account)/i.test(text)));
 }
 
 function loginAccountCandidates() {
@@ -987,9 +1098,12 @@ function scanJobList(profile) {
     if (!isVisible(link)) continue;
     const url = new URL(link.href, location.href).href;
     if (!/^https?:/i.test(url) || seen.has(url)) continue;
-    const card = link.closest("li, article, tr, [class*='job'], [class*='position'], [class*='card'], [class*='item']");
+    // 很多 SPA 的整页容器类名也包含 position/job。对已经明确指向详情的链接，
+    // 直接把链接自身当作岗位卡，避免误取到包住筛选栏和全部结果的巨大父容器。
+    const directDetail = /(?:\/campus\/position\/[^/?#]+\/detail|\/(?:job|jobs|position|positions|posting|postings)\/[^/?#]+(?:\/detail)?|[?&](?:job_?id|position_?id|postid|advertisementid)=)/i.test(url);
+    const card = directDetail ? link : link.closest("li, article, tr, [class*='job'], [class*='position'], [class*='card'], [class*='item']");
     const text = String(card?.innerText || link.innerText || link.getAttribute("aria-label") || "").replace(/\s+/g, " ").trim();
-    if (text.length < 4 || text.length > 1000 || !looksLikeJob(text, url, roleTerms, positionType, skillTerms)) continue;
+    if (text.length < 4 || text.length > 6000 || !looksLikeJob(text, url, roleTerms, positionType, skillTerms)) continue;
 
     const companyEval = ResumePilotScoring.evaluateCompany(`${document.title} ${text}`, url, profile);
     const jobEval = ResumePilotScoring.evaluateJob(text, url, profile);
@@ -1024,7 +1138,7 @@ function scanJobList(profile) {
     const text = String(card.innerText || card.textContent || "").replace(/\s+/g, " ").trim();
     const title = extractCardJobTitle(card, text);
     const signature = cardClickSignature(card);
-    if (!signature || text.length < 4 || text.length > 1000 || !looksLikeJob(text, location.href, roleTerms, positionType, skillTerms)) continue;
+    if (!signature || text.length < 4 || text.length > 6000 || !looksLikeJob(text, location.href, roleTerms, positionType, skillTerms)) continue;
     if (candidates.some((item) => item.clickToken === signature)) continue;
 
     const companyEval = ResumePilotScoring.evaluateCompany(`${document.title} ${text}`, location.href, profile);
