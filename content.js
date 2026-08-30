@@ -7,9 +7,12 @@ const FIELD_RULES = [
   { key: "degree", patterns: [/学历|学位|degree|education level/i] },
   { key: "graduationYear", patterns: [/毕业.*年|graduation.*year|graduate.*year/i] },
   { key: "currentCity", patterns: [/当前.*城市|所在.*城市|现居|location|current city/i] },
-  { key: "skills", patterns: [/技能|技术栈|专长|skills?/i] }
+  { key: "skills", patterns: [/技能|技术栈|专长|skills?/i] },
+  { key: "targetRole", patterns: [/求职.*意向|期望.*职位|目标.*岗位|desired.*position|target.*role/i] },
+  { key: "targetCity", patterns: [/期望.*城市|意向.*地点|工作.*地点|desired.*location|preferred.*city/i] },
+  { key: "resumeText", patterns: [/个人.*总结|自我.*评价|个人.*简介|summary|profile/i] }
 ];
-const CONTENT_SCRIPT_VERSION = "0.8.0";
+const CONTENT_SCRIPT_VERSION = "0.9.0";
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   handleMessage(message)
@@ -36,6 +39,10 @@ async function handleMessage(message) {
   if (message?.type === "OPEN_SCANNED_JOB_MAIN") return requestMainWorldJobClick(message.clickToken || "");
   if (message?.type === "CLICK_JOB_ENTRANCE") return clickJobEntrance(message.index || 0);
   if (message?.type === "OPEN_APPLICATION") return openApplication();
+  if (message?.type === "CREATE_RESUME_FROM_PROFILE") {
+    const { knownAnswers = {} } = await chrome.storage.local.get("knownAnswers");
+    return createResumeFromProfile(message.profile || {}, knownAnswers, message.resumeFile || null);
+  }
   if (message?.type === "TRY_AUTO_LOGIN") return tryAutoLogin();
   if (message?.type === "CHECK_APPLICATION_PAGE") {
     return inspectRecruitmentFlow({});
@@ -467,9 +474,51 @@ function findOfficialSearchButton(input = null) {
   return null;
 }
 
+function detectResumeCreationPrompt() {
+  const promptPattern = /(未创建.{0,20}简历|尚未创建.{0,20}简历|先创建.{0,12}简历|需要创建.{0,12}简历|创建对应的简历|完善.{0,12}(?:在线)?简历|create.{0,20}resume|complete.{0,20}(?:resume|profile))/i;
+  const containers = [...document.querySelectorAll("[role='dialog'], dialog, .jump-resume-modal, [class*='modal'], [class*='dialog']")]
+    .filter(isVisible)
+    .filter((element) => promptPattern.test(String(element.innerText || element.textContent || "").replace(/\s+/g, " ")));
+  const container = containers[0];
+  if (!container) return null;
+  const confirm = [...container.querySelectorAll("button, [role='button'], input[type='button'], input[type='submit']")]
+    .filter(isVisible)
+    .find((element) => /^(确认|确定|继续|去创建|创建简历|立即创建|完善简历|confirm|continue|create)$/i.test(String(element.innerText || element.value || element.getAttribute("aria-label") || "").replace(/\s+/g, " ").trim()))
+    || container.querySelector(".aui-modal-button-confirm");
+  return {
+    container,
+    confirm,
+    text: String(container.innerText || container.textContent || "").replace(/\s+/g, " ").trim().slice(0, 180)
+  };
+}
+
+function detectApplicationContinuationPrompt() {
+  const container = [...document.querySelectorAll(".jump-resume-modal, [role='dialog'], dialog")]
+    .filter(isVisible)
+    .find((element) => /(简历|申请|投递|resume|application)/i.test(String(element.innerText || element.textContent || "")));
+  if (!container) return null;
+  const confirm = [...container.querySelectorAll("button, [role='button'], input[type='button'], input[type='submit']")]
+    .filter(isVisible)
+    .find((element) => /^(确认|确定|继续|去预览|去完善|立即申请|confirm|continue)$/i.test(buttonText(element)))
+    || container.querySelector(".aui-modal-button-confirm");
+  return confirm ? { container, confirm } : null;
+}
+
+function isResumeCreationPage() {
+  if (detectResumeCreationPrompt()) return false;
+  const text = (document.body?.innerText || "").slice(0, 20000);
+  const urlSignal = /(?:resume|cv|profile)(?:[-_/]|$|\?)/i.test(`${location.pathname}${location.search}`);
+  const explicitHeading = /(创建(?:在线)?简历|新建(?:在线)?简历|填写简历|完善(?:在线)?简历|我的简历|create resume|build (?:your )?resume|candidate profile)/i.test(text);
+  const sectionHeading = /(基本信息|教育经历|求职意向|工作经历|项目经历|personal information|education|work experience)/i.test(text);
+  const formSignal = [...document.querySelectorAll("input, textarea, select")].filter(isVisible).length >= 1;
+  return Boolean(formSignal && (explicitHeading || (urlSignal && sectionHeading)));
+}
+
 function inspectRecruitmentFlow(profile = {}) {
   const login = detectLoginRequired();
   const captcha = detectCaptcha();
+  const resumePrompt = detectResumeCreationPrompt();
+  const resumeCreationPage = isResumeCreationPage();
   const formPresent = hasApplicationForm();
   const searchInput = findOfficialSearchInput();
   const searchButton = findOfficialSearchButton(searchInput);
@@ -487,6 +536,8 @@ function inspectRecruitmentFlow(profile = {}) {
   let pageType = "unknown";
   if (login) pageType = "login";
   else if (captcha) pageType = "captcha";
+  else if (resumePrompt) pageType = "resume_create_prompt";
+  else if (resumeCreationPage) pageType = "resume_create";
   else if (formPresent) pageType = "application";
   else if (applicationEntries.length) pageType = "detail";
   else if (searchInput || directJobLinks || clickCards || pagerItems().length) pageType = "list";
@@ -501,6 +552,8 @@ function inspectRecruitmentFlow(profile = {}) {
     detail: "岗位详情→申请入口",
     login: "登录页→登录后返回申请",
     application: "申请表→填写→提交前校验",
+    resume_create_prompt: "岗位申请→官网要求先创建站内简历",
+    resume_create: "站内简历→按导入资料逐步创建→返回岗位",
     captcha: "验证码→按用户策略处理",
     embedded: "嵌入式招聘系统→打开独立岗位页面",
     unknown: "尚未识别，使用通用探测"
@@ -512,6 +565,8 @@ function inspectRecruitmentFlow(profile = {}) {
     login,
     captcha,
     formPresent,
+    resumeCreationRequired: Boolean(resumePrompt),
+    resumeCreationPage,
     searchMethod,
     openMethod,
     pagination,
@@ -669,18 +724,110 @@ function clickJobEntrance(index) {
   return { navigating: true };
 }
 
-function openApplication() {
+async function openApplication() {
   const login = detectLoginRequired();
   const captcha = detectCaptcha();
   const formPresent = hasApplicationForm();
   if (login || captcha || formPresent) return { clicked: false, login, captcha, formPresent };
+  const existingPrompt = detectResumeCreationPrompt();
+  if (existingPrompt) {
+    if (!existingPrompt.confirm) {
+      return { clicked: false, login: false, captcha: false, formPresent: false, resumeCreationRequired: true, creatingResume: false };
+    }
+    setTimeout(() => existingPrompt.confirm.click(), 40);
+    return { clicked: true, login: false, captcha: false, formPresent: false, resumeCreationRequired: true, creatingResume: true };
+  }
+  const existingContinuation = detectApplicationContinuationPrompt();
+  if (existingContinuation) {
+    setTimeout(() => existingContinuation.confirm.click(), 40);
+    return { clicked: true, login: false, captcha: false, formPresent: false, continuingApplication: true };
+  }
   const candidates = [...document.querySelectorAll("a[href], button, [role='button'], input[type='button']")]
     .filter(isVisible)
     .filter((node) => /^(申请|投递|立即申请|立即投递|申请职位|投递简历|投递该职位|开始申请|apply|apply now|apply for|apply this job)$/i.test(String(node.innerText || node.value || node.getAttribute("aria-label") || "").replace(/\s+/g, " ").trim()));
   const target = candidates[0];
   if (!target) return { clicked: false, login: false, captcha: false, formPresent: false };
   target.click();
-  return { clicked: true, login: false, captcha: false, formPresent: false };
+  await wait(550);
+  const prompt = detectResumeCreationPrompt();
+  if (prompt?.confirm) {
+    setTimeout(() => prompt.confirm.click(), 40);
+    return { clicked: true, login: false, captcha: false, formPresent: false, resumeCreationRequired: true, creatingResume: true };
+  }
+  const continuation = detectApplicationContinuationPrompt();
+  if (continuation) {
+    setTimeout(() => continuation.confirm.click(), 40);
+    return { clicked: true, login: false, captcha: false, formPresent: false, continuingApplication: true };
+  }
+  return { clicked: true, login: false, captcha: false, formPresent: hasApplicationForm(), resumeCreationRequired: Boolean(prompt), creatingResume: false };
+}
+
+async function createResumeFromProfile(profile, knownAnswers = {}, resumeFile = null) {
+  const login = detectLoginRequired();
+  const captcha = detectCaptcha();
+  const prompt = detectResumeCreationPrompt();
+  if (login || captcha) {
+    return { resumeCreationPage: false, login, captcha, filled: 0, unknown: 0, unknownFields: [] };
+  }
+  if (prompt) {
+    if (!prompt.confirm) {
+      return { resumeCreationPage: false, resumeCreationRequired: true, navigating: false, filled: 0, unknown: 0, unknownFields: [] };
+    }
+    setTimeout(() => prompt.confirm.click(), 40);
+    return { resumeCreationPage: false, resumeCreationRequired: true, navigating: true, filled: 0, unknown: 0, unknownFields: [] };
+  }
+
+  const resumeCreationPage = isResumeCreationPage();
+  const text = (document.body?.innerText || "").slice(0, 20000);
+  const completed = /(简历创建成功|简历保存成功|已成功创建简历|resume (?:created|saved) successfully)/i.test(text);
+  if (completed) {
+    return { resumeCreationPage, complete: true, filled: 0, unknown: 0, unknownFields: [] };
+  }
+  if (!resumeCreationPage) {
+    return { resumeCreationPage: false, complete: false, filled: 0, unknown: 0, unknownFields: [] };
+  }
+
+  const fillResult = fillApplication(profile, knownAnswers, resumeFile, { allowResumeCreationPage: true });
+  if (fillResult.unknown > 0 || fillResult.captcha || fillResult.login) {
+    return { ...fillResult, resumeCreationPage: true, action: "waiting_fields" };
+  }
+
+  const action = findResumeCreationAction();
+  if (!action) {
+    return { ...fillResult, resumeCreationPage: true, action: "none", advanced: false, saved: false };
+  }
+  if (action.disabled || action.getAttribute("aria-disabled") === "true") {
+    return { ...fillResult, resumeCreationPage: true, action: "disabled", advanced: false, saved: false };
+  }
+  const finalAction = /^(完成|创建简历|立即创建|保存简历|确认创建|保存并完成|保存并返回|保存|提交|finish|create resume|save resume|save|submit)$/i.test(buttonText(action));
+  if (finalAction && document.documentElement.getAttribute("data-resume-pilot-resume-final-clicked") === "true") {
+    return { ...fillResult, resumeCreationPage: true, action: "saving", advanced: false, saved: false };
+  }
+  if (finalAction) document.documentElement.setAttribute("data-resume-pilot-resume-final-clicked", "true");
+  setTimeout(() => action.click(), 40);
+  return {
+    ...fillResult,
+    resumeCreationPage: true,
+    action: finalAction ? "save" : "advance",
+    actionLabel: buttonText(action),
+    advanced: !finalAction,
+    saved: finalAction
+  };
+}
+
+function buttonText(element) {
+  return String(element?.innerText || element?.value || element?.textContent || element?.getAttribute?.("aria-label") || "").replace(/\s+/g, " ").trim();
+}
+
+function findResumeCreationAction() {
+  const buttons = [...document.querySelectorAll("button, [role='button'], input[type='button'], input[type='submit']")]
+    .filter(isVisible)
+    .filter((element) => !/^(返回|上一步|取消|关闭|back|previous|cancel|close)$/i.test(buttonText(element)));
+  const next = buttons.find((element) => /^(下一步|保存并下一步|继续|下一页|next|save and continue|continue)$/i.test(buttonText(element)));
+  if (next) return next;
+  const final = buttons.find((element) => /^(完成|创建简历|立即创建|保存简历|确认创建|保存并完成|finish|create resume|save resume)$/i.test(buttonText(element)));
+  if (final) return final;
+  return buttons.find((element) => /^(保存并返回|保存|提交|save|submit)$/i.test(buttonText(element))) || null;
 }
 
 function hasApplicationForm() {
@@ -940,9 +1087,10 @@ function inferPageCompany() {
   return titlePart?.slice(0, 40) || location.hostname.replace(/^www\./, "");
 }
 
-function fillApplication(profile, knownAnswers = {}, resumeFile = null) {
+function fillApplication(profile, knownAnswers = {}, resumeFile = null, options = {}) {
   document.getElementById("resume-pilot-assistant")?.remove();
-  const formPresent = hasApplicationForm();
+  const formPresent = Boolean(hasApplicationForm() || (options.allowResumeCreationPage && isResumeCreationPage()
+    && document.querySelector("input, textarea, select, input[type='file']")));
   if (!formPresent) {
     return {
       filled: 0,
@@ -969,9 +1117,22 @@ function fillApplication(profile, knownAnswers = {}, resumeFile = null) {
     if (value && setFieldValue(field, value)) {
       field.classList.add("resume-pilot-filled");
       filled += 1;
-    } else if (field.required || field.getAttribute("aria-required") === "true") {
+    } else if (isRequiredField(field)) {
       field.classList.add("resume-pilot-unknown");
       unknown.push({ field, label, key: answerKey, kind: "text" });
+    }
+  }
+
+  for (const group of getRequiredChoiceGroups()) {
+    const label = requiredChoiceLabel(group);
+    const key = normalizeQuestion(label);
+    const savedAnswer = knownAnswers[key];
+    if (savedAnswer && setChoiceGroupValue(group, savedAnswer)) {
+      group.classList.add("resume-pilot-filled");
+      filled += 1;
+    } else {
+      group.classList.add("resume-pilot-unknown");
+      unknown.push({ field: group, label, key, kind: "choice" });
     }
   }
 
@@ -996,6 +1157,59 @@ function getCandidateFields() {
     const type = (field.type || "").toLowerCase();
     return !["hidden", "submit", "button", "reset", "file", "image", "password", "checkbox", "radio"].includes(type);
   });
+}
+
+function isRequiredField(field) {
+  if (field.required || field.getAttribute("aria-required") === "true") return true;
+  const wrapper = field.closest(".form-item, .form-group, .aui-form-item, [class*='form-item'], [class*='form_item']");
+  if (!wrapper) return false;
+  const label = wrapper.querySelector("label, .label, [class*='label']");
+  const labelText = String(label?.innerText || label?.textContent || "").trim();
+  return /(^|\s|：|:)\*|\*(\s|$)/.test(labelText) || Boolean(wrapper.querySelector("[class*='required'], .is-required"));
+}
+
+function getRequiredChoiceGroups() {
+  const groups = new Set();
+  for (const control of document.querySelectorAll("input[type='radio'], input[type='checkbox']")) {
+    if (control.disabled) continue;
+    const group = control.closest("fieldset, [role='radiogroup'], [role='group'], .form-item, .form-group, .aui-form-item, [class*='form-item'], [class*='form_item']");
+    if (!group || !isVisible(group)) continue;
+    const controls = [...group.querySelectorAll("input[type='radio'], input[type='checkbox']")].filter((item) => !item.disabled);
+    if (!controls.length || controls.some((item) => item.checked)) continue;
+    const required = controls.some((item) => item.required || item.getAttribute("aria-required") === "true")
+      || Boolean(group.querySelector("[class*='required'], .is-required"))
+      || /(^|\s|：|:)\*|\*(\s|$)/.test(String(group.querySelector("legend, label, .label, [class*='label']")?.textContent || ""));
+    if (required) groups.add(group);
+  }
+  return [...groups];
+}
+
+function requiredChoiceLabel(group) {
+  const heading = group.querySelector("legend, .form-label, .aui-form-item-label, [class*='form-label'], [class*='item-label']");
+  const raw = String(heading?.innerText || heading?.textContent || group.getAttribute("aria-label") || group.innerText || "必选项")
+    .replace(/\s+/g, " ").trim();
+  return raw.replace(/^\*\s*/, "").split(/(?:是|否|同意|不同意|男|女)\s*$/)[0].slice(0, 60) || "必选项";
+}
+
+function setChoiceGroupValue(group, value) {
+  const normalized = normalize(value);
+  const choices = [...group.querySelectorAll("label, [role='radio'], [role='checkbox'], input[type='radio'], input[type='checkbox']")]
+    .filter((item) => !item.disabled);
+  const target = choices.find((item) => {
+    const control = item.matches("input") ? item : item.querySelector("input[type='radio'], input[type='checkbox']");
+    const label = String(item.innerText || item.textContent || control?.value || item.getAttribute("aria-label") || "");
+    const candidate = normalize(label);
+    return candidate && (candidate.includes(normalized) || normalized.includes(candidate));
+  });
+  if (!target) return false;
+  const control = target.matches("input") ? target : target.querySelector("input[type='radio'], input[type='checkbox']");
+  (control || target).click();
+  return true;
+}
+
+function applyUnknownAnswer(item, value) {
+  if (item.kind === "choice") return setChoiceGroupValue(item.field, value);
+  return setFieldValue(item.field, value);
 }
 
 function isVisible(element) {
@@ -1053,10 +1267,12 @@ function attachStoredResume(resumeFile) {
   const unknown = [];
   let filled = 0;
   for (const field of document.querySelectorAll("input[type='file']")) {
-    if (!isVisible(field) || field.files?.length) continue;
-    const label = humanLabel(field, describeField(field)) || "上传简历附件";
+    if (field.disabled || field.files?.length) continue;
+    const descriptor = describeField(field);
+    if (!isVisible(field) && !/(简历|附件|上传|resume|curriculum|cv)/i.test(descriptor)) continue;
+    const label = humanLabel(field, descriptor) || "上传简历附件";
     if (!resumeFile?.base64) {
-      if (field.required || field.getAttribute("aria-required") === "true") {
+      if (isRequiredField(field)) {
         unknown.push({ field, label, key: normalizeQuestion(label), kind: "file" });
       }
       continue;
@@ -1135,7 +1351,7 @@ function showAssistant({ filled, unknown, captcha = false }) {
       const { knownAnswers = {} } = await chrome.storage.local.get("knownAnswers");
       panel.querySelectorAll("input[data-index]").forEach((input) => {
         const item = unknown[Number(input.dataset.index)];
-        if (input.value.trim() && setFieldValue(item.field, input.value.trim())) {
+        if (input.value.trim() && applyUnknownAnswer(item, input.value.trim())) {
           item.field.classList.remove("resume-pilot-unknown");
           item.field.classList.add("resume-pilot-filled");
           knownAnswers[item.key] = input.value.trim();

@@ -431,6 +431,7 @@ async function runAutoStep(tabId) {
     if (autopilotState.stage === "scan") await autoScanStage(tabId);
     else if (autopilotState.stage === "job") await autoJobStage(tabId);
     else if (autopilotState.stage === "apply") await autoApplyStage(tabId);
+    else if (autopilotState.stage === "resume_create") await autoResumeCreateStage(tabId);
     else if (autopilotState.stage === "verify") await autoVerifyStage(tabId);
   } finally {
     autoStepBusy = false;
@@ -550,6 +551,10 @@ async function openAutoCandidate(tabId, candidate, message = "") {
   autopilotState.resumeStage = "job";
   autopilotState.jobOpenChecks = 0;
   autopilotState.loginAttempts = 0;
+  autopilotState.resumeCreateSteps = 0;
+  autopilotState.resumeCreateIdleChecks = 0;
+  autopilotState.resumeSavePending = false;
+  autopilotState.resumeCreationUrl = "";
   autopilotState.lastMessage = message || `已选择：${candidate.title}（方向：${candidate.matchedRole || "简历匹配"}）`;
   await persistAutopilot();
   if (candidate.clickToken) {
@@ -589,6 +594,12 @@ async function autoJobStage(tabId) {
   const pageState = await sendTabMessage(tabId, { type: "CHECK_APPLICATION_PAGE" });
   if (pageState.captcha) return handleCaptcha("岗位详情页出现验证码");
   if (pageState.login) return attemptAutoLogin(tabId, "岗位详情页需要登录");
+  if (pageState.resumeCreationPage) return startResumeCreation(tabId, "官网已进入站内简历创建页面");
+  if (pageState.resumeCreationRequired) {
+    const opened = await sendTabMessage(tabId, { type: "OPEN_APPLICATION" });
+    if (!opened.clicked) return pauseAutopilot("waiting_resume_creation", "官网要求先创建站内简历，但未能可靠进入创建页面");
+    return startResumeCreation(tabId, "官网要求先创建站内简历，正在进入创建页面");
+  }
   // 动态卡片打开详情可能跨标签或由 SPA 延迟渲染。仍停留在岗位列表时先等待，
   // 不要立刻把列表页误判成“详情页缺少申请按钮”。
   const stillOnList = (pageState.pageType === "list" || /job-list|position-list|jobs(?:\?|$)|positions(?:\?|$)/i.test(pageState.url || "")) && !pageState.formPresent;
@@ -616,6 +627,9 @@ async function autoJobStage(tabId) {
   const response = await sendTabMessage(tabId, { type: "OPEN_APPLICATION" });
   if (response.captcha) return handleCaptcha("岗位详情页出现验证码");
   if (response.login) return attemptAutoLogin(tabId, "打开投递入口后需要登录");
+  if (response.resumeCreationRequired || response.creatingResume) {
+    return startResumeCreation(tabId, "官网要求先创建站内简历，正在用已导入资料创建");
+  }
   if (!response.clicked && !response.formPresent) {
     return pauseAutopilot("application_entry_missing", "已进入职位详情，但未找到可靠的“申请/投递”入口，需要人工确认");
   }
@@ -684,6 +698,10 @@ async function autoApplyStage(tabId) {
   if (response.login) return attemptAutoLogin(tabId, "填写申请前需要登录");
   if (response.captcha) return handleCaptcha("申请表出现验证码");
   if (!response.formPresent) {
+    const pageState = await sendTabMessage(tabId, { type: "CHECK_APPLICATION_PAGE" });
+    if (pageState.resumeCreationRequired || pageState.resumeCreationPage) {
+      return startResumeCreation(tabId, "检测到申请前置的站内简历创建流程");
+    }
     autopilotState.stage = "job";
     autopilotState.resumeStage = "job";
     autopilotState.lastMessage = "当前还不是申请表，正在重新进入申请流程";
@@ -704,6 +722,90 @@ async function autoApplyStage(tabId) {
   autopilotState.lastMessage = "已点击最终提交，正在确认结果";
   await persistAutopilot();
   scheduleAutoStep(tabId, 2500);
+}
+
+async function startResumeCreation(tabId, message) {
+  autopilotState.stage = "resume_create";
+  autopilotState.resumeStage = "resume_create";
+  autopilotState.resumeCreateSteps = Number(autopilotState.resumeCreateSteps || 0);
+  autopilotState.resumeCreateIdleChecks = 0;
+  autopilotState.resumeCreationUrl ||= (await chrome.tabs.get(tabId).catch(() => null))?.url || "";
+  autopilotState.lastMessage = message;
+  await persistAutopilot();
+  scheduleAutoStep(tabId, 1500);
+}
+
+async function autoResumeCreateStage(tabId) {
+  if (!(await ensureCurrentPageScripts(tabId))) return;
+  const { resumeFile = null } = await chrome.storage.local.get("resumeFile");
+  const response = await sendTabMessage(tabId, {
+    type: "CREATE_RESUME_FROM_PROFILE",
+    profile: autopilotState.profile,
+    resumeFile
+  });
+  if (response.login) return attemptAutoLogin(tabId, "创建站内简历前需要登录");
+  if (response.captcha) return handleCaptcha("创建站内简历时出现验证码");
+  if (response.unknown > 0) {
+    autopilotState.resumeStage = "resume_create";
+    return pauseAutopilot("waiting_info", `创建站内简历时有 ${response.unknown} 个新必填项需要回答；回答会被记住`);
+  }
+  if (response.resumeCreationRequired && !response.navigating) {
+    return pauseAutopilot("waiting_resume_creation", "官网要求创建站内简历，但创建入口无法可靠点击");
+  }
+  if (response.navigating || response.advanced) {
+    autopilotState.resumeCreateSteps = Number(autopilotState.resumeCreateSteps || 0) + 1;
+    autopilotState.resumeCreateIdleChecks = 0;
+    if (autopilotState.resumeCreateSteps > 15) {
+      return pauseAutopilot("waiting_resume_creation", "站内简历创建步骤超过安全上限，请检查页面后继续");
+    }
+    autopilotState.lastMessage = response.navigating
+      ? "正在打开站内简历创建页面"
+      : `站内简历已填写并进入下一步${response.actionLabel ? `：${response.actionLabel}` : ""}`;
+    await persistAutopilot();
+    scheduleAutoStep(tabId, 1500);
+    return;
+  }
+  if (response.saved) {
+    autopilotState.resumeSavePending = true;
+    autopilotState.resumeCreateIdleChecks = 0;
+    autopilotState.lastMessage = "已填写站内简历并点击保存，正在确认创建结果";
+    await persistAutopilot();
+    scheduleAutoStep(tabId, 1800);
+    return;
+  }
+  if (response.complete || (autopilotState.resumeSavePending && !response.resumeCreationPage)) {
+    return returnToJobAfterResumeCreation(tabId);
+  }
+  if (autopilotState.resumeSavePending && response.action === "saving") {
+    autopilotState.resumeCreateIdleChecks = Number(autopilotState.resumeCreateIdleChecks || 0) + 1;
+    if (autopilotState.resumeCreateIdleChecks <= 4) {
+      autopilotState.lastMessage = "官网正在保存站内简历，等待结果";
+      await persistAutopilot();
+      scheduleAutoStep(tabId, 1200);
+      return;
+    }
+    return pauseAutopilot("waiting_resume_creation", "已点击保存站内简历，但官网没有返回明确成功结果；请确认后点击继续");
+  }
+  autopilotState.resumeCreateIdleChecks = Number(autopilotState.resumeCreateIdleChecks || 0) + 1;
+  if (autopilotState.resumeCreateIdleChecks <= 3) {
+    autopilotState.lastMessage = "正在识别站内简历的下一步";
+    await persistAutopilot();
+    scheduleAutoStep(tabId, 900);
+    return;
+  }
+  return pauseAutopilot("waiting_resume_creation", "已进入站内简历流程，但未找到可靠的下一步或保存按钮；请检查页面后点击继续");
+}
+
+async function returnToJobAfterResumeCreation(tabId) {
+  const jobUrl = autopilotState.currentJob?.url;
+  autopilotState.resumeSavePending = false;
+  autopilotState.resumeCreateIdleChecks = 0;
+  autopilotState.stage = "job";
+  autopilotState.resumeStage = "job";
+  autopilotState.lastMessage = "站内简历已创建，正在返回原岗位继续申请";
+  await persistAutopilot();
+  if (jobUrl) await chrome.tabs.update(tabId, { url: jobUrl, active: true });
+  else scheduleAutoStep(tabId, 600);
 }
 
 async function autoVerifyStage(tabId) {
