@@ -47,6 +47,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   if (changeInfo.status === "complete") handlePendingManualScan(tabId).catch(() => {});
+  if (changeInfo.status === "complete" && autopilotState?.pendingJobOpen) {
+    maybeAdoptPendingJobTab(tabId).catch(() => {});
+  }
   if (changeInfo.status === "complete" && autopilotState?.active && autopilotState.tabId === tabId && autopilotState.status === "waiting_login") {
     scheduleLoginRecovery(tabId);
   }
@@ -73,7 +76,9 @@ function scheduleLoginRecovery(tabId) {
 
 chrome.tabs.onCreated.addListener((tab) => {
   if (autopilotState?.active && tab.openerTabId === autopilotState.tabId) {
+    autopilotState.sourceListTabId = autopilotState.tabId;
     autopilotState.tabId = tab.id;
+    autopilotState.pendingJobOpen = null;
     autopilotState.lastMessage = "已在新标签页打开岗位详情";
     persistAutopilot().catch(() => {});
     // 极快页面可能在状态更新前就完成加载；额外调度一次，避免新标签页无人继续处理。
@@ -340,6 +345,8 @@ async function startAutopilot(profile) {
     currentJob: null,
     jobQueue: [],
     jobQueueIndex: -1,
+    sourceListTabId: null,
+    pendingJobOpen: null,
     siteFlow: null,
     tabId: null,
     navigationDepth: 0,
@@ -399,6 +406,8 @@ async function moveToNextCompany(reason = "") {
   autopilotState.currentJob = null;
   autopilotState.jobQueue = [];
   autopilotState.jobQueueIndex = -1;
+  autopilotState.sourceListTabId = null;
+  autopilotState.pendingJobOpen = null;
   autopilotState.siteFlow = null;
   autopilotState.roleIndex = 0;
   autopilotState.currentRole = autopilotState.rolePlan?.[0] || { role: clean(autopilotState.profile.targetRole) || "目标岗位", fit: 40, reasons: [] };
@@ -556,18 +565,70 @@ async function openAutoCandidate(tabId, candidate, message = "") {
   autopilotState.resumeSavePending = false;
   autopilotState.resumeCreationUrl = "";
   autopilotState.lastMessage = message || `已选择：${candidate.title}（方向：${candidate.matchedRole || "简历匹配"}）`;
-  await persistAutopilot();
   if (candidate.clickToken) {
+    const sourceUrl = candidate.sourceUrl || "";
+    const rememberedListTab = autopilotState.sourceListTabId
+      ? await chrome.tabs.get(autopilotState.sourceListTabId).catch(() => null)
+      : null;
+    if (rememberedListTab && sourceUrl && canonicalTabUrl(rememberedListTab.url) === canonicalTabUrl(sourceUrl)) {
+      tabId = rememberedListTab.id;
+      autopilotState.tabId = tabId;
+      await chrome.tabs.update(tabId, { active: true });
+    } else {
+      const currentTab = await chrome.tabs.get(tabId).catch(() => null);
+      if (sourceUrl && canonicalTabUrl(currentTab?.url) !== canonicalTabUrl(sourceUrl)) {
+        autopilotState.sourceListTabId = tabId;
+        autopilotState.lastMessage = `${autopilotState.lastMessage}；正在返回该企业岗位列表定位此岗位`;
+        await persistAutopilot();
+        await chrome.tabs.update(tabId, { url: sourceUrl, active: true });
+        return;
+      }
+      autopilotState.sourceListTabId = tabId;
+    }
+    const beforeTabs = await chrome.tabs.query({});
+    autopilotState.pendingJobOpen = {
+      sourceTabId: tabId,
+      sourceUrl,
+      beforeTabIds: beforeTabs.map((item) => item.id),
+      expectedUrl: "",
+      startedAt: Date.now()
+    };
+    await persistAutopilot();
     const opened = await sendTabMessage(tabId, {
       type: "OPEN_SCANNED_JOB",
       clickToken: candidate.clickToken,
       searchTerm: candidate.officialSearchTerm || ""
     });
     if (!opened.clicked) throw new Error("无法打开动态岗位卡片");
+    if (opened.targetUrl && autopilotState.pendingJobOpen) autopilotState.pendingJobOpen.expectedUrl = opened.targetUrl;
+    if (opened.sameTabNavigation) autopilotState.pendingJobOpen = null;
+    await persistAutopilot();
     scheduleAutoStep(tabId, 1800);
   } else {
+    autopilotState.pendingJobOpen = null;
+    await persistAutopilot();
     await chrome.tabs.update(tabId, { url: candidate.url, active: true });
   }
+}
+
+async function maybeAdoptPendingJobTab(tabId) {
+  const pending = autopilotState?.pendingJobOpen;
+  if (!pending || Date.now() - pending.startedAt > 12000 || pending.beforeTabIds.includes(tabId)) return false;
+  const tab = await chrome.tabs.get(tabId).catch(() => null);
+  if (!tab?.url || !/^https?:/i.test(tab.url)) return false;
+  let sameHost = false;
+  try { sameHost = new URL(tab.url).hostname === new URL(pending.sourceUrl).hostname; } catch {}
+  const exactExpected = pending.expectedUrl && canonicalTabUrl(tab.url) === canonicalTabUrl(pending.expectedUrl);
+  const looksLikeDetail = /(post_detail|job[-_/]?detail|position[-_/]?detail|jobdesc|\/jobs?\/[^/?#]+)/i.test(tab.url)
+    && !/(job-list|position-list|\/post\.html)/i.test(tab.url);
+  if (!exactExpected && !(sameHost && looksLikeDetail)) return false;
+  autopilotState.sourceListTabId = pending.sourceTabId;
+  autopilotState.tabId = tabId;
+  autopilotState.pendingJobOpen = null;
+  autopilotState.lastMessage = "已确认官网在新标签页打开岗位详情，自动接管并继续投递";
+  await persistAutopilot();
+  scheduleAutoStep(tabId, 500);
+  return true;
 }
 
 async function moveToNextJobInCompany(reason = "") {
@@ -594,6 +655,10 @@ async function autoJobStage(tabId) {
   const pageState = await sendTabMessage(tabId, { type: "CHECK_APPLICATION_PAGE" });
   if (pageState.captcha) return handleCaptcha("岗位详情页出现验证码");
   if (pageState.login) return attemptAutoLogin(tabId, "岗位详情页需要登录");
+  if (pageState.applicationConflict) {
+    autopilotState.resumeStage = "job";
+    return pauseAutopilot("waiting_application_conflict", "官网提示当前账号已有其他岗位申请；更换岗位可能覆盖原申请，必须由你确认后再继续");
+  }
   if (pageState.resumeCreationPage) return startResumeCreation(tabId, "官网已进入站内简历创建页面");
   if (pageState.resumeCreationRequired) {
     const opened = await sendTabMessage(tabId, { type: "OPEN_APPLICATION" });
@@ -616,6 +681,7 @@ async function autoJobStage(tabId) {
     return;
   }
   autopilotState.jobOpenChecks = 0;
+  autopilotState.pendingJobOpen = null;
   const detailPreparation = await sendTabMessage(tabId, {
     type: "PREPARE_JOB_DETAIL",
     profile: autopilotState.profile,
@@ -627,6 +693,10 @@ async function autoJobStage(tabId) {
   const response = await sendTabMessage(tabId, { type: "OPEN_APPLICATION" });
   if (response.captcha) return handleCaptcha("岗位详情页出现验证码");
   if (response.login) return attemptAutoLogin(tabId, "打开投递入口后需要登录");
+  if (response.applicationConflict) {
+    autopilotState.resumeStage = "job";
+    return pauseAutopilot("waiting_application_conflict", "官网提示当前账号已有其他岗位申请；更换岗位可能覆盖原申请，必须由你确认后再继续");
+  }
   if (response.resumeCreationRequired || response.creatingResume) {
     return startResumeCreation(tabId, "官网要求先创建站内简历，正在用已导入资料创建");
   }
@@ -671,6 +741,15 @@ async function ensureCurrentPageScripts(tabId) {
 async function retryOpenCurrentCandidate(tabId, attempt) {
   const candidate = autopilotState.currentJob || {};
   if (!candidate.clickToken) return false;
+  const beforeTabs = await chrome.tabs.query({}).catch(() => []);
+  autopilotState.pendingJobOpen = {
+    sourceTabId: tabId,
+    sourceUrl: candidate.sourceUrl || "",
+    beforeTabIds: beforeTabs.map((item) => item.id),
+    expectedUrl: "",
+    startedAt: Date.now()
+  };
+  await persistAutopilot();
   // 第一次沿用隔离脚本；后续在网页主世界重新定位真实卡片，兼容 Vue/React
   // 把事件处理器挂在主页面对象上的招聘官网。
   if (attempt === 1) {
@@ -679,12 +758,18 @@ async function retryOpenCurrentCandidate(tabId, attempt) {
       clickToken: candidate.clickToken,
       searchTerm: candidate.officialSearchTerm || ""
     }).catch(() => null);
+    if (response?.targetUrl && autopilotState.pendingJobOpen) autopilotState.pendingJobOpen.expectedUrl = response.targetUrl;
+    if (response?.sameTabNavigation) autopilotState.pendingJobOpen = null;
+    await persistAutopilot();
     return Boolean(response?.clicked);
   }
   const response = await sendTabMessage(tabId, {
     type: "OPEN_SCANNED_JOB_MAIN",
     clickToken: candidate.clickToken
   }).catch(() => null);
+  if (response?.targetUrl && autopilotState.pendingJobOpen) autopilotState.pendingJobOpen.expectedUrl = response.targetUrl;
+  if (response?.sameTabNavigation) autopilotState.pendingJobOpen = null;
+  await persistAutopilot();
   return Boolean(response?.clicked);
 }
 
@@ -699,6 +784,10 @@ async function autoApplyStage(tabId) {
   if (response.captcha) return handleCaptcha("申请表出现验证码");
   if (!response.formPresent) {
     const pageState = await sendTabMessage(tabId, { type: "CHECK_APPLICATION_PAGE" });
+    if (pageState.applicationConflict) {
+      autopilotState.resumeStage = "apply";
+      return pauseAutopilot("waiting_application_conflict", "官网提示当前账号已有其他岗位申请；更换岗位可能覆盖原申请，必须由你确认后再继续");
+    }
     if (pageState.resumeCreationRequired || pageState.resumeCreationPage) {
       return startResumeCreation(tabId, "检测到申请前置的站内简历创建流程");
     }

@@ -12,7 +12,7 @@ const FIELD_RULES = [
   { key: "targetCity", patterns: [/期望.*城市|意向.*地点|工作.*地点|desired.*location|preferred.*city/i] },
   { key: "resumeText", patterns: [/个人.*总结|自我.*评价|个人.*简介|summary|profile/i] }
 ];
-const CONTENT_SCRIPT_VERSION = "0.9.0";
+const CONTENT_SCRIPT_VERSION = "0.10.0";
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   handleMessage(message)
@@ -495,13 +495,63 @@ function detectResumeCreationPrompt() {
 function detectApplicationContinuationPrompt() {
   const container = [...document.querySelectorAll(".jump-resume-modal, [role='dialog'], dialog")]
     .filter(isVisible)
-    .find((element) => /(简历|申请|投递|resume|application)/i.test(String(element.innerText || element.textContent || "")));
+    .find((element) => {
+      const text = String(element.innerText || element.textContent || "");
+      return /(简历|申请|投递|resume|application)/i.test(text)
+        && !/(只可投递\s*1\s*个岗位|已经投递过|是否更换成|更换岗位|替换.*(?:岗位|申请)|replace.*application)/i.test(text);
+    });
   if (!container) return null;
   const confirm = [...container.querySelectorAll("button, [role='button'], input[type='button'], input[type='submit']")]
     .filter(isVisible)
     .find((element) => /^(确认|确定|继续|去预览|去完善|立即申请|confirm|continue)$/i.test(buttonText(element)))
     || container.querySelector(".aui-modal-button-confirm");
   return confirm ? { container, confirm } : null;
+}
+
+function detectApplicationConflict() {
+  const pattern = /(只可投递\s*1\s*个岗位|已经投递过|已投递(?:其他|过).*岗位|是否更换成|更换(?:为|成)?.*岗位|替换.*(?:岗位|申请)|replace.*(?:job|application))/i;
+  const container = [...document.querySelectorAll("[role='dialog'], dialog, [class*='modal'], [class*='dialog'], .model")]
+    .filter(isVisible)
+    .find((element) => pattern.test(String(element.innerText || element.textContent || "").replace(/\s+/g, " ")));
+  return container ? {
+    container,
+    text: String(container.innerText || container.textContent || "").replace(/\s+/g, " ").trim().slice(0, 240)
+  } : null;
+}
+
+function getRecruitmentSiteAdapter() {
+  if (location.hostname === "career.huawei.com") {
+    return {
+      id: "huawei-campus",
+      name: "华为校园招聘",
+      verified: true,
+      filterMethod: "官网公开岗位接口 + 招聘类型",
+      listMethod: "advertisementId 直达详情",
+      detailPattern: "job-details?advertisementId=",
+      applicationMethod: "岗位意向/地点/部门 → 申请 → 站内简历"
+    };
+  }
+  if (location.hostname === "join.qq.com") {
+    return {
+      id: "tencent-campus",
+      name: "腾讯校园招聘",
+      verified: true,
+      filterMethod: "应届实习/日常实习复选框 + 官网关键词查看",
+      listMethod: ".post_box → 官网生成 post_detail.html?postid=… → 同标签进入",
+      detailPattern: "post_detail.html?postid=",
+      applicationMethod: "投递简历 → 登录/检查既有申请 → resumeedit.html",
+      limitation: "官网同一阶段可能只允许保留一个岗位；更换既有申请必须暂停确认"
+    };
+  }
+  return {
+    id: "generic-discovery",
+    name: location.hostname,
+    verified: false,
+    filterMethod: "先探测官网搜索框、筛选控件和结果变化",
+    listMethod: "验证真实链接或岗位卡点击后再进入详情",
+    detailPattern: "由页面实测确认",
+    applicationMethod: "详情页识别登录、验证码、申请入口和表单"
+  };
 }
 
 function isResumeCreationPage() {
@@ -519,6 +569,8 @@ function inspectRecruitmentFlow(profile = {}) {
   const captcha = detectCaptcha();
   const resumePrompt = detectResumeCreationPrompt();
   const resumeCreationPage = isResumeCreationPage();
+  const applicationConflict = detectApplicationConflict();
+  const siteAdapter = getRecruitmentSiteAdapter();
   const formPresent = hasApplicationForm();
   const searchInput = findOfficialSearchInput();
   const searchButton = findOfficialSearchButton(searchInput);
@@ -536,6 +588,7 @@ function inspectRecruitmentFlow(profile = {}) {
   let pageType = "unknown";
   if (login) pageType = "login";
   else if (captcha) pageType = "captcha";
+  else if (applicationConflict) pageType = "application_conflict";
   else if (resumePrompt) pageType = "resume_create_prompt";
   else if (resumeCreationPage) pageType = "resume_create";
   else if (formPresent) pageType = "application";
@@ -552,6 +605,7 @@ function inspectRecruitmentFlow(profile = {}) {
     detail: "岗位详情→申请入口",
     login: "登录页→登录后返回申请",
     application: "申请表→填写→提交前校验",
+    application_conflict: "官网检测到既有申请→暂停确认是否更换岗位",
     resume_create_prompt: "岗位申请→官网要求先创建站内简历",
     resume_create: "站内简历→按导入资料逐步创建→返回岗位",
     captcha: "验证码→按用户策略处理",
@@ -575,7 +629,12 @@ function inspectRecruitmentFlow(profile = {}) {
     applicationEntries: applicationEntries.length,
     embeddedUrl: embeddedFrame?.src || "",
     entrances: entrances.length,
-    summary: summaryMap[pageType]
+    applicationConflict: Boolean(applicationConflict),
+    applicationConflictText: applicationConflict?.text || "",
+    siteAdapter,
+    summary: siteAdapter.verified
+      ? `${siteAdapter.name}：${siteAdapter.filterMethod}→${siteAdapter.listMethod}→${siteAdapter.applicationMethod}`
+      : summaryMap[pageType]
   };
 }
 
@@ -729,6 +788,10 @@ async function openApplication() {
   const captcha = detectCaptcha();
   const formPresent = hasApplicationForm();
   if (login || captcha || formPresent) return { clicked: false, login, captcha, formPresent };
+  const existingConflict = detectApplicationConflict();
+  if (existingConflict) {
+    return { clicked: false, login: false, captcha: false, formPresent: false, applicationConflict: true, conflictText: existingConflict.text };
+  }
   const existingPrompt = detectResumeCreationPrompt();
   if (existingPrompt) {
     if (!existingPrompt.confirm) {
@@ -749,6 +812,10 @@ async function openApplication() {
   if (!target) return { clicked: false, login: false, captcha: false, formPresent: false };
   target.click();
   await wait(550);
+  const conflict = detectApplicationConflict();
+  if (conflict) {
+    return { clicked: true, login: false, captcha: false, formPresent: false, applicationConflict: true, conflictText: conflict.text };
+  }
   const prompt = detectResumeCreationPrompt();
   if (prompt?.confirm) {
     setTimeout(() => prompt.confirm.click(), 40);
@@ -1024,11 +1091,14 @@ function requestMainWorldJobClick(clickToken) {
   const root = document.documentElement;
   root.setAttribute("data-resume-pilot-click-token", clickToken);
   root.removeAttribute("data-resume-pilot-click-result");
+  root.removeAttribute("data-resume-pilot-click-target-url");
   document.dispatchEvent(new Event("resume-pilot-open-job-main"));
   const result = root.getAttribute("data-resume-pilot-click-result") || "listener_missing";
+  const targetUrl = root.getAttribute("data-resume-pilot-click-target-url") || "";
   root.removeAttribute("data-resume-pilot-click-token");
   root.removeAttribute("data-resume-pilot-click-result");
-  return { clicked: result === "clicked", result };
+  root.removeAttribute("data-resume-pilot-click-target-url");
+  return { clicked: result === "clicked", result, targetUrl, sameTabNavigation: Boolean(targetUrl) };
 }
 
 async function openScannedJob(clickToken, searchTerm = "") {
@@ -1053,6 +1123,12 @@ async function openScannedJob(clickToken, searchTerm = "") {
   if (!target) throw new Error("岗位列表已变化，请重新扫描");
   const beforeUrl = location.href;
   target.scrollIntoView({ block: "center", behavior: "instant" });
+  if (location.hostname === "join.qq.com" && target.matches?.(".post_box")) {
+    const mainResult = requestMainWorldJobClick(clickToken);
+    if (mainResult.clicked) {
+      return { ...mainResult, beforeUrl, currentUrl: location.href, opening: true, adapter: "tencent-campus" };
+    }
+  }
   // 常见站点把事件绑定在岗位名称容器或整张卡片上；避开“收藏/分享”。
   const clickTarget = target.querySelector(".job-name, .position-name, .job-name-box, .position-name-box, [class*='job-title'], [class*='position-title']") || target;
   // 先回复后台，再执行点击。否则同标签页立即导航时消息端口会随旧页面销毁，

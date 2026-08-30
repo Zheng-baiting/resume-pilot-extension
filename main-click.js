@@ -1,8 +1,9 @@
 (function installMainWorldJobClickBridge() {
-  const BRIDGE_VERSION = "0.9.0";
+  const BRIDGE_VERSION = "0.10.0";
   const REQUEST_EVENT = "resume-pilot-open-job-main";
   const TOKEN_ATTRIBUTE = "data-resume-pilot-click-token";
   const RESULT_ATTRIBUTE = "data-resume-pilot-click-result";
+  const TARGET_URL_ATTRIBUTE = "data-resume-pilot-click-target-url";
   document.documentElement.setAttribute("data-resume-pilot-main-click-version", BRIDGE_VERSION);
 
   function normalize(value) {
@@ -34,6 +35,29 @@
     }
     target.scrollIntoView({ block: "center", behavior: "instant" });
     const clickTarget = target.querySelector(".job-name-box, .position-name-box, .post_title, [class*='job-title'], [class*='position-title'], .job-name, .position-name") || target;
+    root.removeAttribute(TARGET_URL_ATTRIBUTE);
+    // 腾讯岗位卡会用 window.open(..., '_blank') 打开详情。Edge 并不总能把这个
+    // 新标签稳定关联回扩展任务，因此在腾讯官网主环境中捕获官网自己生成的详情 URL，
+    // 改为同标签跳转。URL 仍完全由腾讯页面生成，不猜测岗位 ID。
+    if (location.hostname === "join.qq.com" && target.matches?.(".post_box")) {
+      const nativeOpen = window.open;
+      let targetUrl = "";
+      try {
+        window.open = function(url) {
+          targetUrl = new URL(String(url || ""), location.href).href;
+          return null;
+        };
+        clickTarget.click();
+      } finally {
+        window.open = nativeOpen;
+      }
+      if (targetUrl) {
+        root.setAttribute(TARGET_URL_ATTRIBUTE, targetUrl);
+        root.setAttribute(RESULT_ATTRIBUTE, "clicked");
+        setTimeout(() => location.assign(targetUrl), 60);
+        return;
+      }
+    }
     root.setAttribute(RESULT_ATTRIBUTE, "clicked");
     clickTarget.click();
   }, true);
