@@ -57,7 +57,7 @@
       aliases: ["Baidu"],
       domains: ["talent.baidu.com"],
       careerUrl: "https://talent.baidu.com/jobs/campus",
-      jobListUrls: { campus: "https://talent.baidu.com/jobs/list?projectType=1", intern: "https://talent.baidu.com/jobs/list?projectType=2" },
+      jobListUrls: { campus: "https://talent.baidu.com/jobs/list?recruitType=GRADUATE", intern: "https://talent.baidu.com/jobs/list?recruitType=INTERN" },
       tags: ["互联网", "人工智能", "搜索", "自动驾驶", "云计算"],
       dimensions: { stability: 84, growth: 87, student: 88, transparency: 88 },
       evidence: [{ label: "官方校园招聘与职位", url: "https://talent.baidu.com/jobs/campus" }]
@@ -65,9 +65,9 @@
     {
       company: "京东",
       aliases: ["JD", "JD.com"],
-      domains: ["zhaopin.jd.com"],
-      careerUrl: "https://zhaopin.jd.com/",
-      jobListUrls: { campus: "https://zhaopin.jd.com/", intern: "https://zhaopin.jd.com/" },
+      domains: ["zhaopin.jd.com", "campus.jd.com"],
+      careerUrl: "https://campus.jd.com/",
+      jobListUrls: { campus: "https://campus.jd.com/#/jobs", intern: "https://campus.jd.com/#/jobs?selProjects=45" },
       tags: ["互联网", "电商", "物流", "零售", "人工智能"],
       dimensions: { stability: 84, growth: 80, student: 82, transparency: 78 },
       evidence: [{ label: "官方招聘入口", url: "https://zhaopin.jd.com/" }]
@@ -85,9 +85,9 @@
     {
       company: "小米",
       aliases: ["Xiaomi"],
-      domains: ["hr.xiaomi.com", "career.mi.com"],
+      domains: ["hr.xiaomi.com", "career.mi.com", "xiaomi.jobs.f.mioffice.cn"],
       careerUrl: "https://hr.xiaomi.com/campus",
-      jobListUrls: { campus: "https://hr.xiaomi.com/campus", intern: "https://hr.xiaomi.com/campus" },
+      jobListUrls: { campus: "https://xiaomi.jobs.f.mioffice.cn/campus/", intern: "https://xiaomi.jobs.f.mioffice.cn/internship/" },
       tags: ["硬件", "互联网", "汽车", "人工智能", "芯片", "IoT"],
       dimensions: { stability: 82, growth: 89, student: 87, transparency: 83 },
       evidence: [{ label: "官方校园招聘入口", url: "https://hr.xiaomi.com/campus" }]
@@ -107,7 +107,7 @@
       aliases: ["DJI", "大疆创新"],
       domains: ["careers.dji.com", "apply.careers.dji.com"],
       careerUrl: "https://careers.dji.com/zh-CN/campus",
-      jobListUrls: { campus: "https://careers.dji.com/zh-CN/campus/hot-jobs", intern: "https://careers.dji.com/zh-CN/campus" },
+      jobListUrls: { campus: "https://careers.dji.com/zh-CN/campus/hot-jobs", intern: "https://apply.careers.dji.com/social-recruitment/dji/168240" },
       tags: ["硬件", "机器人", "无人机", "人工智能", "嵌入式"],
       dimensions: { stability: 79, growth: 90, student: 90, transparency: 86 },
       evidence: [{ label: "官方校园招聘与热招职位", url: "https://careers.dji.com/zh-CN/campus/hot-jobs" }]

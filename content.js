@@ -12,7 +12,7 @@ const FIELD_RULES = [
   { key: "targetCity", patterns: [/期望.*城市|意向.*地点|工作.*地点|desired.*location|preferred.*city/i] },
   { key: "resumeText", patterns: [/个人.*总结|自我.*评价|个人.*简介|summary|profile/i] }
 ];
-const CONTENT_SCRIPT_VERSION = "0.11.0";
+const CONTENT_SCRIPT_VERSION = "0.12.0";
 const MAX_COLLECTED_JOBS = 200;
 const MAX_JOB_PAGES = 20;
 
@@ -75,6 +75,10 @@ async function deepScanJobList(profile) {
     }
   }
 
+  // 飞书招聘、Moka 以及部分企业自研 SPA 会在 document_idle 之后数秒才挂载
+  // 搜索框和岗位卡。先等待“可操作能力”出现，避免把尚未水合的空壳页误判成无岗位。
+  await waitForRecruitmentListHydration();
+
   const collected = new Map();
   await selectOfficialPositionType(profile);
   const searchInput = findOfficialSearchInput();
@@ -109,6 +113,15 @@ async function deepScanJobList(profile) {
       searchVerified: !searchTerms.length || verifiedSearchTerms.length > 0
     }
   };
+}
+
+async function waitForRecruitmentListHydration() {
+  if (!/(job|career|campus|recruit|talent|position|zhaopin|join|apply)/i.test(`${location.hostname}${location.pathname}${location.hash}`)) return false;
+  for (let attempt = 0; attempt < 16; attempt += 1) {
+    if (findOfficialSearchInput() || findDirectJobLinks().length || findClickableJobCards().length || findApplicationEntries().length || discoverJobEntrances().length) return true;
+    await wait(450);
+  }
+  return false;
 }
 
 async function scanHuaweiOfficialJobs(profile) {
@@ -430,6 +443,24 @@ async function selectOfficialPositionType(profile) {
     ? /^(实习生|实习|interns?)$/i
     : (/校园|校招|应届|graduate|campus/i.test(profile.positionType || "") ? /^(应届生|校园招聘|校招|graduate|campus)$/i : null);
   if (!desired) return false;
+  if (location.hostname === "campus-talent.alibaba.com") {
+    const wanted = /实习|intern/i.test(profile.positionType || "") ? "阿里巴巴日常实习生" : "阿里巴巴2027届应届生";
+    const checkbox = [...document.querySelectorAll("input[type='checkbox'], [role='checkbox']")]
+      .find((element) => String(element.getAttribute("aria-label") || element.closest("label")?.innerText || element.parentElement?.innerText || "").includes(wanted));
+    if (!checkbox || checkbox.checked || checkbox.getAttribute("aria-checked") === "true") return false;
+    const before = jobPageSignature();
+    checkbox.click();
+    return waitForJobListChange(before);
+  }
+  if (location.hostname === "careers.oppo.com") {
+    const wanted = /实习|intern/i.test(profile.positionType || "") ? /实习生/ : /应届生/;
+    const checkbox = [...document.querySelectorAll("input[type='checkbox'], [role='checkbox']")]
+      .find((element) => wanted.test(String(element.getAttribute("aria-label") || element.closest("label")?.innerText || element.parentElement?.innerText || "")));
+    if (!checkbox || checkbox.checked || checkbox.getAttribute("aria-checked") === "true") return false;
+    const before = jobPageSignature();
+    checkbox.click();
+    return waitForJobListChange(before);
+  }
   if (location.hostname === "jobs.bytedance.com") {
     const wanted = /实习|intern/i.test(profile.positionType || "") ? "实习" : "正式";
     const labels = [...document.querySelectorAll("[data-cy-value], [role='treeitem']")];
@@ -578,6 +609,85 @@ function getRecruitmentSiteAdapter() {
       applicationMethod: "岗位详情→投递→登录→/resume/{id}/apply"
     };
   }
+  if (location.hostname === "campus-talent.alibaba.com") {
+    return {
+      id: "alibaba-campus",
+      name: "阿里巴巴校园招聘",
+      verified: true,
+      filterMethod: "项目类型/职位类别/地点/业务集团复选框 + 官网关键词",
+      listMethod: "/campus/position/{id} 真实链接 + 编号分页",
+      detailPattern: "/campus/position/{id}",
+      applicationMethod: "加入意向单→按简历匹配业务集团/部门→下一步→登录/简历",
+      limitation: "职位按意向顺序流转且集团内次数有限，最终提交前必须再次确认"
+    };
+  }
+  if (location.hostname === "talent.baidu.com") {
+    return {
+      id: "baidu-campus",
+      name: "百度校园招聘",
+      verified: true,
+      filterMethod: "recruitType 区分 GRADUATE/INTERN + 官网关键词/类别/地点",
+      listMethod: "职位列表→职位详情；实习入口使用 recruitType=INTERN",
+      detailPattern: "职位编号 J… 的详情页",
+      applicationMethod: "职位详情→立即投递→登录/简历"
+    };
+  }
+  if (location.hostname === "campus.jd.com") {
+    return {
+      id: "jd-campus",
+      name: "京东校园招聘",
+      verified: true,
+      filterMethod: "招聘项目 + 职位类别/地点/业务 + 官网关键词",
+      listMethod: "外层职位卡→#/details?id={id} + 编号分页",
+      detailPattern: "#/details?id=",
+      applicationMethod: "投递简历→京东登录浮层→申请表"
+    };
+  }
+  if (location.hostname === "job.meituan.com") {
+    return {
+      id: "meituan-campus",
+      name: "美团校园招聘",
+      verified: true,
+      filterMethod: "招聘项目/城市/类别/部门/招聘类型 + 官网关键词",
+      listMethod: ".position_list_item（data-jobunionid）点击卡 + 编号分页",
+      detailPattern: "点击式 SPA 岗位详情",
+      applicationMethod: "岗位详情→投递/申请→登录/简历"
+    };
+  }
+  if (/xiaomi\.jobs\.f\.mioffice\.cn$/.test(location.hostname)) {
+    return {
+      id: "xiaomi-feishu-campus",
+      name: "小米飞书招聘",
+      verified: true,
+      filterMethod: "城市/职能分类/职位标签 + 搜索职位",
+      listMethod: "/position/{id}/detail 真实链接 + 编号分页",
+      detailPattern: "/position/{id}/detail",
+      applicationMethod: "投递→手机验证登录→/resume/{id}/apply"
+    };
+  }
+  if (location.hostname === "careers.dji.com") {
+    return {
+      id: "dji-campus",
+      name: "大疆校园招聘",
+      verified: true,
+      filterMethod: "官网热招关键词/技术方向→带 keyword 的 Moka ATS",
+      listMethod: "官网热招链接→apply.careers.dji.com→#/job/{id}",
+      detailPattern: "#/job/{uuid}",
+      applicationMethod: "申请职位→登录/简历表",
+      limitation: "当前校招公告仅允许投递 1 次，最终提交前必须再次确认"
+    };
+  }
+  if (location.hostname === "careers.oppo.com") {
+    return {
+      id: "oppo-campus",
+      name: "OPPO 校园招聘",
+      verified: true,
+      filterMethod: "招聘类型/职位类别/城市复选框 + 官网关键词",
+      listMethod: ".job__item 点击式岗位卡 + 编号分页",
+      detailPattern: "/university/oppo/campus/post/{id}",
+      applicationMethod: "职位详情→投递岗位→个人中心登录/简历"
+    };
+  }
   const ats = detectRecruitmentPlatform();
   if (ats) {
     return {
@@ -623,6 +733,12 @@ function detectRecruitmentPlatform() {
   if (/mokahr\.com$|moka\.hr$/.test(host)) {
     return { id: "ats-moka", name: "Moka", detailPattern: "职位列表→岗位 ID 详情", applyPattern: "详情→申请职位→登录/简历表" };
   }
+  if (/\.mioffice\.cn$/.test(host)) {
+    return { id: "ats-feishu", name: "飞书招聘", detailPattern: "职位列表→/position/{id}/detail", applyPattern: "详情→投递→手机验证登录→/resume/{id}/apply" };
+  }
+  if (host === "apply.careers.dji.com") {
+    return { id: "ats-moka", name: "Moka（大疆）", detailPattern: "官网热招页→ATS→#/job/{id}", applyPattern: "详情→申请职位→登录/简历表" };
+  }
   return null;
 }
 
@@ -643,7 +759,7 @@ function findDirectJobLinks() {
         (["ats-lever", "ats-ashby", "ats-smartrecruiters"].includes(platform.id) && segments.length >= 2)
         || (platform.id === "ats-greenhouse" && /\/jobs?\//i.test(parsed.pathname))
         || (platform.id === "ats-workday" && /\/job\//i.test(parsed.pathname))
-        || (platform.id === "ats-moka" && /(?:job|position|post|recruit)/i.test(url))
+        || (["ats-moka", "ats-feishu"].includes(platform.id) && /(?:job|position|post|recruit)/i.test(url))
       ));
       return text.length >= 4 && (detailUrlPattern.test(url) || platformSpecific)
         && /(职位|岗位|实习|校招|应届|工程师|开发|产品|运营|设计|算法|测试|job|position|intern|engineer|developer)/i.test(`${text} ${url}`);
@@ -651,7 +767,7 @@ function findDirectJobLinks() {
 }
 
 function findApplicationEntries() {
-  const pattern = /^(申请|投递|立即申请|立即投递|申请职位|投递简历|投递该职位|开始申请|提交申请|apply|apply now|apply for|apply this job|start application|start your application|i['’]?m interested)$/i;
+  const pattern = /^(申请|投递|立即申请|立即投递|申请职位|投递简历|投递岗位|投递该职位|开始申请|提交申请|加入意向单|apply|apply now|apply for|apply this job|start application|start your application|i['’]?m interested)$/i;
   return [...document.querySelectorAll("a[href], button, [role='button'], input[type='button'], input[type='submit']")]
     .filter(isVisible)
     .filter((node) => pattern.test(String(node.innerText || node.value || node.textContent || node.getAttribute("aria-label") || "").replace(/\s+/g, " ").trim()));
@@ -869,7 +985,7 @@ function getRecommendedJobListUrl(profile) {
 }
 
 function discoverJobEntrances() {
-  const pattern = /(查看职位|搜索职位|职位搜索|浏览职位|全部职位|在招职位|热招职位|立即投递|开始申请|加入我们|view jobs|search jobs|open positions|apply now)/i;
+  const pattern = /(查看职位|搜索职位|职位搜索|浏览职位|全部职位|在招职位|热招职位|立即投递|开始申请|立即加入|加入我们|日常实习生|view jobs|search jobs|open positions|apply now)/i;
   return [...document.querySelectorAll("a[href], button, [role='button']")]
     .filter((element) => isVisible(element) && pattern.test(element.innerText || element.textContent || element.getAttribute("aria-label") || ""))
     .slice(0, 12)
@@ -1177,9 +1293,11 @@ function scanJobList(profile) {
 function findClickableJobCards() {
   const selectors = [
     ".job-item", ".position-item", ".job-card", ".position-card", ".post_box",
+    ".job__item", ".position_list_item", ".job_list_item",
     "[class*='job-list'] > li", "[class*='position-list'] > li",
+    "[class*='job_list_item']", "[class*='position_list_item']", "[class^='item___']",
     "[class*='vacancy']", "[class*='opening']", "[class*='recruit'] [class*='item']",
-    "[data-job-id]", "[data-position-id]", "[data-jobid]", "[data-positionid]"
+    "[data-job-id]", "[data-position-id]", "[data-jobid]", "[data-positionid]", "[data-jobunionid]"
   ];
   const cards = [...document.querySelectorAll(selectors.join(","))]
     .filter(isVisible)
@@ -1193,8 +1311,10 @@ function extractCardJobTitle(card, fallback) {
 }
 
 function cardClickSignature(card) {
+  const stableId = card.getAttribute?.("data-jobunionid") || card.getAttribute?.("data-job-id")
+    || card.getAttribute?.("data-position-id") || card.getAttribute?.("data-jobid") || card.getAttribute?.("data-positionid");
   const value = card.matches?.(".post_box") ? (card.innerText || card.textContent || "") : extractCardJobTitle(card, card.innerText || "");
-  return normalizeClickSignature(value);
+  return normalizeClickSignature(stableId ? `id:${stableId}:${value}` : value);
 }
 
 function normalizeClickSignature(value) {
@@ -1244,7 +1364,7 @@ async function openScannedJob(clickToken, searchTerm = "") {
     }
   }
   // 常见站点把事件绑定在岗位名称容器或整张卡片上；避开“收藏/分享”。
-  const clickTarget = target.querySelector(".job-name, .position-name, .job-name-box, .position-name-box, [class*='job-title'], [class*='position-title']") || target;
+  const clickTarget = target.querySelector(".job-name, .position-name, .job-name-box, .position-name-box, .job__title, .pub_name, .tit, [class*='job-title'], [class*='position-title']") || target;
   // 先回复后台，再执行点击。否则同标签页立即导航时消息端口会随旧页面销毁，
   // 后台会把“其实已经打开详情”误判成失败。
   setTimeout(() => clickTarget.click(), 40);

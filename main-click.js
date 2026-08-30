@@ -1,5 +1,5 @@
 (function installMainWorldJobClickBridge() {
-  const BRIDGE_VERSION = "0.11.0";
+  const BRIDGE_VERSION = "0.12.0";
   const REQUEST_EVENT = "resume-pilot-open-job-main";
   const TOKEN_ATTRIBUTE = "data-resume-pilot-click-token";
   const RESULT_ATTRIBUTE = "data-resume-pilot-click-result";
@@ -13,16 +13,21 @@
   function findCards() {
     const selectors = [
       ".job-item", ".position-item", ".job-card", ".position-card", ".post_box",
+      ".job__item", ".position_list_item", ".job_list_item",
       "[class*='job-list'] > li", "[class*='position-list'] > li",
+      "[class*='job_list_item']", "[class*='position_list_item']", "[class^='item___']",
       "[class*='vacancy']", "[class*='opening']", "[class*='recruit'] [class*='item']",
-      "[data-job-id]", "[data-position-id]", "[data-jobid]", "[data-positionid]"
+      "[data-job-id]", "[data-position-id]", "[data-jobid]", "[data-positionid]", "[data-jobunionid]"
     ];
     return [...new Set(document.querySelectorAll(selectors.join(",")))];
   }
 
   function titleOf(card) {
+    const stableId = card.getAttribute?.("data-jobunionid") || card.getAttribute?.("data-job-id")
+      || card.getAttribute?.("data-position-id") || card.getAttribute?.("data-jobid") || card.getAttribute?.("data-positionid");
     if (card.matches?.(".post_box")) return card.textContent || "";
-    return card.querySelector(".job-name, .position-name, .post_title, [class*='job-name'], [class*='position-name'], h1, h2, h3, h4, [class*='title']")?.textContent || card.textContent || "";
+    const title = card.querySelector(".job-name, .position-name, .post_title, [class*='job-name'], [class*='position-name'], h1, h2, h3, h4, [class*='title']")?.textContent || card.textContent || "";
+    return stableId ? `id:${stableId}:${title}` : title;
   }
 
   document.addEventListener(REQUEST_EVENT, () => {
@@ -34,7 +39,7 @@
       return;
     }
     target.scrollIntoView({ block: "center", behavior: "instant" });
-    const clickTarget = target.querySelector(".job-name-box, .position-name-box, .post_title, [class*='job-title'], [class*='position-title'], .job-name, .position-name") || target;
+    const clickTarget = target.querySelector(".job-name-box, .position-name-box, .post_title, .job__title, .pub_name, .tit, [class*='job-title'], [class*='position-title'], .job-name, .position-name") || target;
     root.removeAttribute(TARGET_URL_ATTRIBUTE);
     // 腾讯岗位卡会用 window.open(..., '_blank') 打开详情。Edge 并不总能把这个
     // 新标签稳定关联回扩展任务，因此在腾讯官网主环境中捕获官网自己生成的详情 URL，
