@@ -12,7 +12,7 @@ const FIELD_RULES = [
   { key: "targetCity", patterns: [/期望.*城市|意向.*地点|工作.*地点|desired.*location|preferred.*city/i] },
   { key: "resumeText", patterns: [/个人.*总结|自我.*评价|个人.*简介|summary|profile/i] }
 ];
-const CONTENT_SCRIPT_VERSION = "0.12.0";
+const CONTENT_SCRIPT_VERSION = "0.12.1";
 const MAX_COLLECTED_JOBS = 200;
 const MAX_JOB_PAGES = 20;
 
@@ -87,7 +87,9 @@ async function deepScanJobList(profile) {
 
   if (searchTerms.length) {
     for (const term of searchTerms) {
-      if (await runOfficialKeywordSearch(searchInput, term)) verifiedSearchTerms.push(term);
+      // 腾讯等 SPA 每次搜索会销毁并重建输入框；每轮都重新定位当前输入框。
+      const currentInput = findOfficialSearchInput();
+      if (await runOfficialKeywordSearch(currentInput, term)) verifiedSearchTerms.push(term);
       await collectOfficialJobPages(profile, collected);
       // 不要因为第一个宽泛关键词已经收集到 30 条就停止。不同关键词常常对应
       // 完全不同的岗位池；继续验证剩余关键词，直到总上限真正达到。
@@ -95,7 +97,7 @@ async function deepScanJobList(profile) {
     }
     // 无论关键词是否已有结果，都清空关键词并完整翻页一次。这样岗位标题不完全匹配，
     // 但卡片内容命中简历技能的岗位也不会被漏掉。
-    await runOfficialKeywordSearch(searchInput, "");
+    await runOfficialKeywordSearch(findOfficialSearchInput(), "");
     await collectOfficialJobPages(profile, collected);
   } else {
     if (searchInput && searchInput.value.trim()) await runOfficialKeywordSearch(searchInput, "");
@@ -879,6 +881,7 @@ function buildOfficialSearchTerms(profile) {
 }
 
 async function runOfficialKeywordSearch(input, term) {
+  if (!input?.isConnected) input = findOfficialSearchInput();
   if (!input) return false;
   const before = jobPageSignature();
   const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
@@ -1336,13 +1339,17 @@ function requestMainWorldJobClick(clickToken) {
 }
 
 async function openScannedJob(clickToken, searchTerm = "") {
-  const searchInput = findOfficialSearchInput();
-  if (searchInput && searchInput.value !== searchTerm) await runOfficialKeywordSearch(searchInput, searchTerm);
   let cards = findClickableJobCards();
   let target = cards.find((card) => cardClickSignature(card) === clickToken);
-  // 输入框可能已经显示关键词，但官网状态仍是旧列表。找不到目标时强制再次触发官网搜索。
-  if (!target && searchInput && searchTerm) {
-    await runOfficialKeywordSearch(searchInput, searchTerm);
+  const recoveryTerms = buildSearchRecoveryTerms(searchTerm);
+  // 即使输入框表面上已经显示目标词，也重新触发一次官网搜索；搜索后的 SPA 可能
+  // 已替换输入框，或 URL 与实际列表状态不同。零结果时再逐级使用宽泛词恢复岗位卡。
+  for (const term of recoveryTerms) {
+    if (target) break;
+    const currentInput = findOfficialSearchInput();
+    if (!currentInput) break;
+    await runOfficialKeywordSearch(currentInput, term);
+    await wait(350);
     cards = findClickableJobCards();
     target = cards.find((card) => cardClickSignature(card) === clickToken);
   }
@@ -1369,6 +1376,13 @@ async function openScannedJob(clickToken, searchTerm = "") {
   // 后台会把“其实已经打开详情”误判成失败。
   setTimeout(() => clickTarget.click(), 40);
   return { clicked: true, beforeUrl, currentUrl: location.href, opening: true };
+}
+
+function buildSearchRecoveryTerms(searchTerm = "") {
+  const exact = String(searchTerm || "").trim();
+  const broad = exact.replace(/(?:开发|研发)?(?:工程师|实习生?)$/i, "").trim();
+  const known = exact.match(/前端|后端|后台|服务端|全栈|客户端|软件|算法|测试|数据|产品|运营/i)?.[0] || "";
+  return [...new Set([exact, broad, known].filter((term) => term.length > 1))];
 }
 
 function looksLikeJob(text, url, roleTerms, positionType, skillTerms = []) {

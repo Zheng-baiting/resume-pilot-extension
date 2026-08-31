@@ -770,23 +770,19 @@ async function retryOpenCurrentCandidate(tabId, attempt) {
     startedAt: Date.now()
   };
   await persistAutopilot();
-  // 第一次沿用隔离脚本；后续在网页主世界重新定位真实卡片，兼容 Vue/React
-  // 把事件处理器挂在主页面对象上的招聘官网。
-  if (attempt === 1) {
-    const response = await sendTabMessage(tabId, {
-      type: "OPEN_SCANNED_JOB",
-      clickToken: candidate.clickToken,
-      searchTerm: candidate.officialSearchTerm || ""
-    }).catch(() => null);
-    if (response?.targetUrl && autopilotState.pendingJobOpen) autopilotState.pendingJobOpen.expectedUrl = response.targetUrl;
-    if (response?.sameTabNavigation) autopilotState.pendingJobOpen = null;
-    await persistAutopilot();
-    return Boolean(response?.clicked);
-  }
-  const response = await sendTabMessage(tabId, {
-    type: "OPEN_SCANNED_JOB_MAIN",
-    clickToken: candidate.clickToken
+  // 每次重试都先让隔离脚本恢复候选岗位对应的官网关键词；否则腾讯处于 0 条结果
+  // 时，直接在主世界点击只会再次得到 card_missing。
+  let response = await sendTabMessage(tabId, {
+    type: "OPEN_SCANNED_JOB",
+    clickToken: candidate.clickToken,
+    searchTerm: candidate.officialSearchTerm || ""
   }).catch(() => null);
+  if (!response?.clicked && attempt > 1) {
+    response = await sendTabMessage(tabId, {
+      type: "OPEN_SCANNED_JOB_MAIN",
+      clickToken: candidate.clickToken
+    }).catch(() => null);
+  }
   if (response?.targetUrl && autopilotState.pendingJobOpen) autopilotState.pendingJobOpen.expectedUrl = response.targetUrl;
   if (response?.sameTabNavigation) autopilotState.pendingJobOpen = null;
   await persistAutopilot();

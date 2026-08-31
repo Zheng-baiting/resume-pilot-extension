@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
+import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 
-const root = process.cwd().replace(/\\/g, "/");
+const root = fileURLToPath(new URL("../", import.meta.url)).replace(/\\/g, "/").replace(/\/$/, "");
 const browser = await chromium.launch({
   headless: true,
   executablePath: "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe"
