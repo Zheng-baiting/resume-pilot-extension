@@ -113,6 +113,9 @@ button, .file-button {
 
 .status { min-height: 22px; padding: 8px 1px; color: var(--muted); }
 .search-hint { margin-top: 8px; color: #667085; font-size: 11px; }
+.role-recommendation { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; margin: -3px 0 11px; padding: 8px 9px; border: 1px solid #c7d7fe; border-radius: 8px; background: #eef4ff; color: #475467; font-size: 11px; }
+.role-recommendation strong { width: 100%; color: #344054; font-size: 11px; }
+.role-chip { padding: 3px 7px; border-radius: 999px; background: #dbeafe; color: #1d4ed8; font-weight: 700; }
 .city-picker { margin-bottom: 11px; padding: 10px; border: 1px solid var(--line); border-radius: 9px; background: #fff; }
 .city-picker > label { margin-bottom: 8px; }
 .city-options { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; }

@@ -46,4 +46,24 @@ assert.match(profile.skills, /RAG/);
 assert.match(profile.skills, /ResNet/);
 assert.notEqual(profile.major, "课程：计算机网络");
 
+const softwareResume = `个人简历
+教育背景：示例大学 计算机科学与技术 本科 2027 年毕业
+专业技能：熟悉 React、TypeScript、Vue、Node.js、MySQL、Redis、Python、Pandas 和 SQL。
+项目经历：使用 React 与 TypeScript 开发管理后台；使用 Node.js、MySQL 和 Redis 设计接口；
+使用 Python、Pandas 和 SQL 完成业务数据清洗、分析和可视化。`;
+const softwareProfile = globalThis.ResumePilotImport.parseResumeProfile(softwareResume);
+const recommendations = globalThis.ResumePilotImport.recommendTargetRoles(softwareResume);
+
+assert.match(softwareProfile.targetRole, /前端开发工程师/);
+assert.match(softwareProfile.targetRole, /后端开发工程师/);
+assert.match(softwareProfile.targetRole, /数据分析与数据工程师/);
+assert.doesNotMatch(softwareProfile.targetRole, /网络工程师/);
+assert.match(softwareProfile.targetIndustry, /互联网软件/);
+assert.match(softwareProfile.skills, /React/);
+assert.match(softwareProfile.skills, /Node\.js/);
+assert.match(softwareProfile.skills, /SQL/);
+assert.match(softwareProfile.skills, /Python/);
+assert.ok(recommendations.length > 0 && recommendations.length <= 6);
+assert.ok(recommendations.every((item, index) => index === 0 || recommendations[index - 1].score >= item.score));
+
 console.log("resume profile parser test passed");

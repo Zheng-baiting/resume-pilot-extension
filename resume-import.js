@@ -18,6 +18,26 @@
   }
 
   const SKILL_RULES = [
+    ["Python", /\bPython\b/i],
+    ["Java", /\bJava\b(?!Script)/i],
+    ["C++", /\bC\+\+/i],
+    ["JavaScript", /\bJavaScript\b/i],
+    ["TypeScript", /\bTypeScript\b/i],
+    ["React", /\bReact(?:\.js)?\b/i],
+    ["Vue", /\bVue(?:\.js)?\b/i],
+    ["Node.js", /\bNode(?:\.js|JS)?\b/i],
+    ["SQL", /\bSQL\b/i],
+    ["MySQL", /\bMySQL\b/i],
+    ["Redis", /\bRedis\b/i],
+    ["Git", /\bGit\b/i],
+    ["Docker", /\bDocker\b/i],
+    ["Kubernetes", /\bKubernetes\b|\bK8s\b/i],
+    ["PyTorch", /\bPyTorch\b/i],
+    ["TensorFlow", /\bTensorFlow\b/i],
+    ["Pandas", /\bPandas\b/i],
+    ["NumPy", /\bNumPy\b/i],
+    ["Figma", /\bFigma\b/i],
+    ["STM32", /\bSTM32\b/i],
     ["H3C", /\bH3C\b/i],
     ["路由交换", /路由交换|交换机|路由器/i],
     ["OSPF", /\bOSPF\b/i],
@@ -40,6 +60,22 @@
     ["数据预处理", /数据预处理|数据集处理/i],
     ["模型训练", /模型训练|模型调优|超参数/i],
     ["CAD", /\bCAD\b/i]
+  ];
+
+  const ROLE_RECOMMENDATION_RULES = [
+    { role: "前端开发工程师", major: /计算机|软件|数字媒体/, strong: /前端|frontend/i, signals: [/React/i, /Vue/i, /JavaScript/i, /TypeScript/i, /HTML/i, /CSS/i, /小程序/i] },
+    { role: "后端开发工程师", major: /计算机|软件|信息管理/, strong: /后端|服务端|backend/i, signals: [/Spring/i, /Node(?:\.js|JS)?/i, /Django|Flask/i, /MySQL/i, /Redis/i, /Java\b/i, /Golang|\bGo\b/i] },
+    { role: "软件开发工程师", major: /计算机|软件|人工智能|信息工程|通信工程|自动化/, strong: /软件开发|开发工程师|程序设计/i, signals: [/Python/i, /Java\b/i, /C\+\+/i, /JavaScript/i, /Git/i, /数据结构|算法设计/i] },
+    { role: "AI与算法工程师", major: /人工智能|智能科学|计算机|数据科学|数学/, strong: /人工智能|机器学习|深度学习|大模型|算法/i, signals: [/PyTorch/i, /TensorFlow/i, /CNN/i, /ResNet/i, /RAG/i, /LangChain/i, /模型训练|模型调优/i] },
+    { role: "数据分析与数据工程师", major: /数据科学|统计|数学|计算机|信息管理|经济/, strong: /数据分析|数据工程|数据开发|商业分析/i, signals: [/SQL/i, /Pandas/i, /NumPy/i, /Power\s*BI/i, /Tableau/i, /Excel/i, /数据清洗|数据预处理/i] },
+    { role: "测试开发工程师", major: /计算机|软件|自动化/, strong: /测试开发|自动化测试|测试工程|QA/i, signals: [/Selenium/i, /Pytest/i, /JUnit/i, /Postman/i, /接口测试|性能测试/i] },
+    { role: "网络工程师", major: /网络工程|通信工程|信息工程|计算机/, strong: /网络工程|数通|路由交换|组网/i, signals: [/H3C/i, /OSPF/i, /VLAN/i, /STP/i, /WLAN/i, /网络排错/i] },
+    { role: "网络安全工程师", major: /网络安全|信息安全|网络工程|计算机/, strong: /网络安全|信息安全|安全工程|渗透测试/i, signals: [/防火墙/i, /ACL/i, /漏洞/i, /Wireshark/i, /Linux/i] },
+    { role: "通信工程师", major: /通信工程|电子信息|信息工程/, strong: /通信网络|通信系统|无线通信|5G|基站/i, signals: [/信号处理/i, /射频/i, /光通信/i, /网络规划/i] },
+    { role: "嵌入式开发工程师", major: /电子|自动化|通信|计算机|物联网/, strong: /嵌入式|单片机|驱动开发/i, signals: [/STM32/i, /FreeRTOS/i, /Arduino/i, /C\+\+/i, /PCB/i, /传感器/i] },
+    { role: "云计算与运维工程师", major: /计算机|软件|网络|云计算/, strong: /云计算|运维|SRE|DevOps/i, signals: [/Docker/i, /Kubernetes|K8s/i, /Linux/i, /CI\/CD/i, /Shell/i, /云平台/i] },
+    { role: "产品经理", major: /信息管理|工业设计|计算机|工商管理/, strong: /产品经理|产品设计|产品策划/i, signals: [/需求分析/i, /用户研究/i, /Axure/i, /原型设计/i, /竞品分析/i] },
+    { role: "UI与用户体验设计师", major: /设计|数字媒体|艺术/, strong: /UI|UX|交互设计|用户体验|视觉设计/i, signals: [/Figma/i, /Photoshop/i, /Illustrator/i, /原型设计/i] }
   ];
 
   function cleanInline(value = "") {
@@ -78,18 +114,42 @@
     return cleanInline(inSchool || "");
   }
 
+  function recommendTargetRoles(text) {
+    const normalized = String(text || "");
+    const candidates = ROLE_RECOMMENDATION_RULES.map((rule) => {
+      let score = 0;
+      const reasons = [];
+      const majorMatched = rule.major.test(normalized);
+      const strongMatched = rule.strong.test(normalized);
+      if (majorMatched) {
+        score += 18;
+        reasons.push("专业相关");
+      }
+      if (strongMatched) {
+        score += 32;
+        reasons.push("经历中有明确岗位线索");
+      }
+      const matchedSignals = rule.signals.filter((pattern) => pattern.test(normalized));
+      if (matchedSignals.length) {
+        score += Math.min(42, matchedSignals.length * 8);
+        reasons.push(`命中 ${matchedSignals.length} 项技能/项目线索`);
+      }
+      return { role: rule.role, score: Math.min(100, score), reasons, majorMatched, evidenceMatched: strongMatched || matchedSignals.length > 0 };
+    });
+    const evidenceBased = candidates.filter((item) => item.evidenceMatched);
+    const selected = evidenceBased.length ? evidenceBased : candidates.filter((item) => item.majorMatched).slice(0, 3);
+    return selected.sort((a, b) => b.score - a.score || a.role.localeCompare(b.role, "zh-CN"))
+      .slice(0, 6)
+      .map(({ role, score, reasons }) => ({ role, score, reasons }));
+  }
+
   function inferTargetRole(text) {
     const explicit = text.match(/(?:意向岗位|求职意向|目标岗位|期望职位)\s*[:：]\s*([\s\S]{2,140}?)(?=(?:[，,。；;]\s*)?(?:期望|希望|教育背景|项目经历|联系方式|联系我|优势特长)|$)/)?.[1];
     if (explicit) {
       const roles = cleanInline(explicit).split(/[、,，;；/]/).map(cleanInline).filter(Boolean);
       return [...new Set(roles)].join("、");
     }
-    const roles = [];
-    if (/H3C|路由交换|OSPF|VLAN|网络排错|组网/i.test(text)) roles.push("网络工程师", "数通工程师", "网络运维工程师");
-    if (/通信工程|通信网络|通信信号/i.test(text)) roles.push("通信工程师");
-    if (/RAG|LangChain|大模型|人工智能/i.test(text)) roles.push("AI应用工程师");
-    if (/CNN|ResNet|深度学习|机器学习/i.test(text)) roles.push("通信算法工程师", "机器学习实习生");
-    return [...new Set(roles)].slice(0, 6).join("、");
+    return recommendTargetRoles(text).map((item) => item.role).join("、");
   }
 
   function inferTargetIndustry(text, targetRole = "") {
@@ -187,5 +247,5 @@
     return { kind: "resume", text, extension, saveAsAttachment: false };
   }
 
-  global.ResumePilotImport = { MAX_FILE_SIZE, getExtension, validateFile, parseResumeProfile, read };
+  global.ResumePilotImport = { MAX_FILE_SIZE, getExtension, validateFile, parseResumeProfile, recommendTargetRoles, read };
 })(globalThis);

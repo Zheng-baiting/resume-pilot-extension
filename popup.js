@@ -17,6 +17,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   bindTabs();
   bindActions();
   bindCityPicker();
+  bindRoleRecommendation();
   await restoreProfile();
   await restoreResumeFile();
   await restoreLatestScan();
@@ -61,7 +62,27 @@ async function restoreProfile() {
       else element.value = profile[field];
     }
   }
+  const targetRole = document.getElementById("targetRole");
+  const targetIndustry = document.getElementById("targetIndustry");
+  const resumeText = document.getElementById("resumeText").value.trim();
+  let inferredFromSavedResume = false;
+  if (!targetRole.value.trim() && resumeText) {
+    const inferred = ResumePilotImport.parseResumeProfile(resumeText);
+    if (inferred.targetRole) {
+      targetRole.value = inferred.targetRole;
+      if (!targetIndustry.value.trim() && inferred.targetIndustry) targetIndustry.value = inferred.targetIndustry;
+      await chrome.storage.local.set({
+        profile: {
+          ...profile,
+          targetRole: targetRole.value,
+          targetIndustry: targetIndustry.value
+        }
+      });
+      inferredFromSavedResume = true;
+    }
+  }
   syncCityPicker();
+  renderRoleRecommendation(targetRole.value, inferredFromSavedResume ? "已根据已保存简历自动填入" : "当前目标岗位");
 }
 
 function collectProfile() {
@@ -108,6 +129,31 @@ function syncCityPicker() {
   });
 }
 
+function bindRoleRecommendation() {
+  document.getElementById("targetRole").addEventListener("input", (event) => {
+    renderRoleRecommendation(event.target.value, "当前目标岗位");
+  });
+}
+
+function renderRoleRecommendation(value = "", label = "已根据简历自动填入") {
+  const container = document.getElementById("roleRecommendation");
+  const roles = [...new Set(String(value).split(/[，,、;；/\n]+/).map((role) => role.trim()).filter(Boolean))].slice(0, 6);
+  container.replaceChildren();
+  if (!roles.length) {
+    container.textContent = "导入或识别简历后，将自动填写合适的目标岗位。";
+    return;
+  }
+  const title = document.createElement("strong");
+  title.textContent = `${label}（${roles.length} 个方向）`;
+  container.append(title);
+  for (const role of roles) {
+    const chip = document.createElement("span");
+    chip.className = "role-chip";
+    chip.textContent = role;
+    container.append(chip);
+  }
+}
+
 async function saveProfile() {
   await chrome.storage.local.set({ profile: collectProfile() });
   flash("资料已保存在本机");
@@ -129,14 +175,17 @@ function parseResumeText(options = {}) {
 
   const values = ResumePilotImport.parseResumeProfile(text, options.fileName || "");
   let filled = 0;
+  let roleApplied = false;
   Object.entries(values).forEach(([key, value]) => {
     const element = document.getElementById(key);
     if (value && element && (options.overwrite || !element.value)) {
       element.value = String(value);
       filled += 1;
+      if (key === "targetRole") roleApplied = true;
     }
   });
   syncCityPicker();
+  renderRoleRecommendation(document.getElementById("targetRole").value, roleApplied ? "已根据简历自动填入" : "当前目标岗位");
   if (!options.silent) flash("已识别可确认的信息，请检查后保存");
   return filled;
 }
@@ -157,7 +206,19 @@ async function importResumeFile(event) {
           else element.value = String(data[field]);
         }
       }
+      let inferredFromJson = false;
+      if (!document.getElementById("targetRole").value.trim() && document.getElementById("resumeText").value.trim()) {
+        const inferred = ResumePilotImport.parseResumeProfile(document.getElementById("resumeText").value);
+        if (inferred.targetRole) {
+          document.getElementById("targetRole").value = inferred.targetRole;
+          if (!document.getElementById("targetIndustry").value.trim() && inferred.targetIndustry) {
+            document.getElementById("targetIndustry").value = inferred.targetIndustry;
+          }
+          inferredFromJson = true;
+        }
+      }
       syncCityPicker();
+      renderRoleRecommendation(document.getElementById("targetRole").value, inferredFromJson ? "已根据简历自动填入" : "当前目标岗位");
       await saveProfile();
       flash("JSON 资料已导入并保存在本机，请检查内容");
       return;

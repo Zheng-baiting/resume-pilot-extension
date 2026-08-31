@@ -162,6 +162,7 @@ async function handleRuntimeMessage(message, sender) {
 
 async function searchOfficialCareers(criteria = {}) {
   const role = clean(criteria.role) || "校园招聘";
+  const roleTerms = splitList(role);
   const city = ResumePilotCities.forSearch(criteria.city);
   const cityTerms = ResumePilotCities.split(city);
   const industry = clean(criteria.industry);
@@ -170,25 +171,26 @@ async function searchOfficialCareers(criteria = {}) {
   const preferredCompanies = splitList(criteria.preferredCompanies).slice(0, 8);
   const page = Math.max(0, Number(criteria.page || 0));
   const pageSize = 6;
+  const roleForQuery = (index = 0) => roleTerms.length ? roleTerms[(page + index) % roleTerms.length] : "校园招聘";
   const cityForQuery = (index = 0) => cityTerms.length ? cityTerms[(page + index) % cityTerms.length] : "";
 
   const matchedSeeds = selectSeeds(industry, preferredCompanies);
   const pageSeeds = matchedSeeds.slice(page * pageSize, (page + 1) * pageSize);
   const companyQueries = preferredCompanies.map((company, index) =>
-    `${company} ${role} ${cityForQuery(index)} ${positionType} 职位 官方招聘`
+    `${company} ${roleForQuery(index)} ${cityForQuery(index)} ${positionType} 职位 官方招聘`
   );
   const seedQueries = pageSeeds.slice(0, 3).map((seed, index) =>
-    `site:${seed.domain} ${role} ${cityForQuery(index)} ${positionType}`
+    `site:${seed.domain} ${roleForQuery(index)} ${cityForQuery(index)} ${positionType}`
   );
   const discoveryQueries = [
-    `${role} ${cityForQuery(0)} ${industry} ${positionType} 职位 官方招聘 careers`,
-    `${role} ${cityForQuery(1)} ${industry} ${positionType} 行业龙头 上市公司 科技公司 官方招聘`
+    `${roleForQuery(0)} ${cityForQuery(0)} ${industry} ${positionType} 职位 官方招聘 careers`,
+    `${roleForQuery(1)} ${cityForQuery(1)} ${industry} ${positionType} 行业龙头 上市公司 科技公司 官方招聘`
   ];
   const queries = [...new Set([...(page === 0 ? companyQueries : []), ...seedQueries, ...(page === 0 ? discoveryQueries : [])])].slice(0, 7);
 
   const offset = page * 10;
   const batches = await Promise.all(queries.map((query) => fetchRssResults(query, offset).catch(() => [])));
-  const liveDiscovery = await discoverLiveCareerResults({ role, city: cityForQuery(2), industry, positionType }, page).catch(() => ({ results: [], companyNames: [] }));
+  const liveDiscovery = await discoverLiveCareerResults({ role: roleForQuery(2), city: cityForQuery(2), industry, positionType }, page).catch(() => ({ results: [], companyNames: [] }));
   const { jobWatchState = {} } = await chrome.storage.local.get("jobWatchState");
   const watched = (jobWatchState.candidates || []).slice(page * 4, page * 4 + 4);
   const deduped = new Map();
@@ -359,7 +361,7 @@ function stripHtml(value) {
 }
 
 function splitList(value = "") {
-  return String(value).split(/[，,、;；\n]/).map(clean).filter(Boolean);
+  return String(value).split(/[，,、;；/\n]/).map(clean).filter(Boolean);
 }
 
 const ROLE_TAXONOMY = [

@@ -9,7 +9,7 @@ const fetchedUrls = [];
 const context = {
   chrome: {
     runtime: {
-      getManifest: () => ({ version: "0.15.0" }),
+      getManifest: () => ({ version: "0.16.0" }),
       onMessage: { addListener() {} },
       onInstalled: { addListener() {} },
       onStartup: { addListener() {} }
@@ -64,5 +64,12 @@ assert.ok(!decodedQueries.some((url) => url.includes("上海、杭州")), decode
 fetchedUrls.length = 0;
 await vm.runInContext("searchOfficialCareers({ role: '软件开发', city: '不限', industry: '互联网', positionType: '实习', page: 0 })", context);
 assert.ok(!fetchedUrls.map((url) => decodeURIComponent(url)).some((url) => url.includes("不限")));
+
+fetchedUrls.length = 0;
+await vm.runInContext("searchOfficialCareers({ role: '前端开发工程师、后端开发工程师', city: '不限', industry: '互联网', positionType: '实习', page: 0 })", context);
+const decodedRoleQueries = fetchedUrls.map((url) => decodeURIComponent(url));
+assert.ok(decodedRoleQueries.some((url) => url.includes("前端开发工程师")), decodedRoleQueries.join("\n"));
+assert.ok(decodedRoleQueries.some((url) => url.includes("后端开发工程师")), decodedRoleQueries.join("\n"));
+assert.ok(!decodedRoleQueries.some((url) => url.includes("前端开发工程师、后端开发工程师")), decodedRoleQueries.join("\n"));
 
 console.log("company diversity and watch tests passed");
