@@ -165,13 +165,23 @@
     { company: "霍尼韦尔", aliases: ["Honeywell"], domains: ["careers.honeywell.com", "honeywell.com.cn"], careerUrl: "https://careers.honeywell.com/en/sites/Honeywell/jobs", tags: ["外企", "自动化", "工业", "人工智能", "软件"], segment: "外企" },
     { company: "Zilliz", aliases: ["上海栖厘科技"], domains: ["zilliz.com.cn"], careerUrl: "https://zilliz.com.cn/careers", tags: ["成长型企业", "人工智能", "数据库", "云计算", "软件"], segment: "成长型企业" },
     { company: "第四范式", aliases: ["4Paradigm"], domains: ["4paradigm.com"], careerUrl: "https://www.4paradigm.com/about/recruit.html", tags: ["成长型企业", "人工智能", "企业软件", "数据", "云计算"], segment: "成长型企业" },
-    { company: "Momenta", aliases: ["初速度科技"], domains: ["momenta.cn"], careerUrl: "https://www.momenta.cn/join.html", tags: ["成长型企业", "自动驾驶", "人工智能", "算法", "软件"], segment: "成长型企业" }
+    { company: "Momenta", aliases: ["初速度科技"], domains: ["momenta.cn"], careerUrl: "https://www.momenta.cn/join.html", tags: ["成长型企业", "自动驾驶", "人工智能", "算法", "软件"], segment: "成长型企业" },
+    { company: "MiniMax", aliases: ["稀宇科技"], domains: ["minimaxi.com"], careerUrl: "https://www.minimaxi.com/careers", tags: ["成长型企业", "人工智能", "大模型", "软件", "算法"], segment: "成长型企业" },
+    { company: "PingCAP", aliases: ["平凯星辰"], domains: ["pingcap.com"], careerUrl: "https://www.pingcap.com/careers/", tags: ["成长型企业", "数据库", "云计算", "软件", "开源"], segment: "成长型企业" },
+    { company: "集创北方", aliases: ["Chipone"], domains: ["chiponeic.com"], careerUrl: "https://www.chiponeic.com/job", tags: ["成长型企业", "芯片", "半导体", "嵌入式", "软件"], segment: "成长型企业" },
+    { company: "云天励飞", aliases: ["Intellifusion"], domains: ["intellif.com"], careerUrl: "https://www.intellif.com/int/join.html", tags: ["成长型企业", "人工智能", "芯片", "算法", "软件"], segment: "成长型企业" },
+    { company: "地平线", aliases: ["Horizon Robotics"], domains: ["sp.wintalent.cn", "horizon.auto"], careerUrl: "https://sp.wintalent.cn/Horizon/campus/index.html", tags: ["成长型企业", "自动驾驶", "芯片", "人工智能", "软件"], segment: "成长型企业" },
+    { company: "黑芝麻智能", aliases: ["Black Sesame Technologies"], domains: ["bsthr.zhiye.com", "blacksesame.com"], careerUrl: "https://bsthr.zhiye.com/", tags: ["成长型企业", "自动驾驶", "芯片", "算法", "软件"], segment: "成长型企业" },
+    { company: "涂鸦智能", aliases: ["Tuya"], domains: ["job.tuya.com", "app.mokahr.com"], careerUrl: "https://job.tuya.com/", tags: ["成长型企业", "物联网", "人工智能", "云计算", "软件"], segment: "成长型企业" },
+    { company: "石头科技", aliases: ["Roborock"], domains: ["mall.roborock.com"], careerUrl: "https://mall.roborock.com/introduction/jobs", tags: ["成长型企业", "机器人", "人工智能", "嵌入式", "软件"], segment: "成长型企业" },
+    { company: "影石创新", aliases: ["Insta360", "影石科技"], domains: ["arashivision.jobs.feishu.cn"], careerUrl: "https://arashivision.jobs.feishu.cn/campus/position/list", tags: ["成长型企业", "影像", "人工智能", "嵌入式", "软件"], segment: "成长型企业" }
   ];
 
   const segmentDimensions = {
     外企: { stability: 78, growth: 76, student: 78, transparency: 82 },
     行业企业: { stability: 76, growth: 80, student: 80, transparency: 76 },
-    成长型企业: { stability: 62, growth: 86, student: 72, transparency: 65 }
+    成长型企业: { stability: 62, growth: 86, student: 72, transparency: 65 },
+    中小企业: { stability: 52, growth: 78, student: 68, transparency: 52 }
   };
   const segmentByCompany = {
     腾讯: "大型民企", 字节跳动: "大型民企", 华为: "大型民企", 阿里巴巴: "大型民企",
@@ -259,9 +269,10 @@
     const haystack = `${text || ""} ${url || ""}`.toLowerCase();
     const roleTerms = splitTerms(profile.targetRole);
     const skillTerms = splitTerms(profile.skills);
-    const cityPreference = global.ResumePilotCities?.match(haystack, profile.targetCity) || (() => {
+    const cityPreference = global.ResumePilotCities?.analyze(haystack, profile.targetCity) || (() => {
       const cities = splitList(profile.targetCity).filter((city) => !/^(?:不限|全国|任意城市?)$/i.test(city));
-      return { cities, matched: cities.filter((city) => haystack.includes(city.toLowerCase())), unrestricted: !cities.length };
+      const matched = cities.filter((city) => haystack.includes(city.toLowerCase()));
+      return { cities, matched, unrestricted: !cities.length, status: !cities.length ? "unrestricted" : (matched.length ? "matched" : "unknown"), foundCities: [], flexible: false };
     })();
     const positionType = clean(profile.positionType);
     const graduationYear = clean(profile.graduationYear);
@@ -289,10 +300,20 @@
     }
 
     if (!cityPreference.unrestricted) {
-      if (cityPreference.matched.length) {
-        score += 15;
-        reasons.push(`地点：${cityPreference.matched.slice(0, 3).join("、")}`);
-      } else warnings.push(`地点未确认（期望：${cityPreference.cities.slice(0, 4).join("、")}）`);
+      if (cityPreference.status === "matched") {
+        score += 22;
+        reasons.push(`地点匹配：${cityPreference.matched.slice(0, 3).join("、")}`);
+      } else if (cityPreference.status === "flexible") {
+        score += 12;
+        reasons.push("岗位支持全国/远程地点");
+      } else if (cityPreference.status === "mismatch") {
+        score -= 45;
+        hardBlocked = true;
+        warnings.push(`工作地点不匹配（发现：${cityPreference.foundCities.slice(0, 4).join("、")}；期望：${cityPreference.cities.slice(0, 4).join("、")}）`);
+      } else {
+        score -= 8;
+        warnings.push(`工作地点尚未确认（期望：${cityPreference.cities.slice(0, 4).join("、")}；进入详情后必须复核）`);
+      }
     } else {
       score += 7;
       if (global.ResumePilotCities?.isUnlimited(profile.targetCity)) reasons.push("地点不限");
@@ -361,6 +382,10 @@
       matchedSkills: unique(matchedSkills),
       skillEligible: matchedSkills.length > 0,
       hardBlocked,
+      cityMatchStatus: cityPreference.status,
+      targetCities: cityPreference.cities,
+      matchedCities: cityPreference.matched,
+      foundCities: cityPreference.foundCities || [],
       compensationScore: compensation.score,
       compensationLabel: compensation.label,
       reasons: unique(reasons).slice(0, 5),

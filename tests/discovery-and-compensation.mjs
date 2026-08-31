@@ -3,10 +3,13 @@ import assert from "node:assert/strict";
 await import("../scoring.js");
 
 const scoring = globalThis.ResumePilotScoring;
-assert.ok(scoring.companies.length >= 30, `expected a diversified catalog, got ${scoring.companies.length}`);
+assert.ok(scoring.companies.length >= 40, `expected a diversified catalog, got ${scoring.companies.length}`);
 const segments = new Set(scoring.companies.map((item) => item.segment));
 for (const segment of ["外企", "行业企业", "成长型企业", "大型民企"]) {
   assert.ok(segments.has(segment), `missing company segment: ${segment}`);
+}
+for (const company of ["MiniMax", "PingCAP", "集创北方", "云天励飞", "地平线", "黑芝麻智能", "涂鸦智能", "石头科技", "影石创新"]) {
+  assert.ok(scoring.companies.some((item) => item.company === company), `missing growth company: ${company}`);
 }
 
 const profile = {

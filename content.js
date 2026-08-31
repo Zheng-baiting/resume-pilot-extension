@@ -12,7 +12,7 @@ const FIELD_RULES = [
   { key: "targetCity", patterns: [/期望.*城市|意向.*地点|工作.*地点|desired.*location|preferred.*city/i] },
   { key: "resumeText", patterns: [/个人.*总结|自我.*评价|个人.*简介|summary|profile/i] }
 ];
-const CONTENT_SCRIPT_VERSION = "0.17.0";
+const CONTENT_SCRIPT_VERSION = "0.18.0";
 const MAX_COLLECTED_JOBS = 200;
 const MAX_JOB_PAGES = 20;
 
@@ -37,6 +37,7 @@ async function handleMessage(message) {
   }
   if (message?.type === "INSPECT_RECRUITMENT_FLOW") return inspectRecruitmentFlow(message.profile || {});
   if (message?.type === "PREPARE_JOB_DETAIL") return prepareJobDetail(message.profile || {}, message.job || {});
+  if (message?.type === "VERIFY_JOB_LOCATION") return verifyCurrentJobLocation(message.profile || {}, message.job || {});
   if (message?.type === "OPEN_SCANNED_JOB") return openScannedJob(message.clickToken || "", message.searchTerm || "");
   if (message?.type === "OPEN_SCANNED_JOB_MAIN") return requestMainWorldJobClick(message.clickToken || "");
   if (message?.type === "CLICK_JOB_ENTRANCE") return clickJobEntrance(message.index || 0);
@@ -179,6 +180,10 @@ async function scanHuaweiOfficialJobs(profile) {
       matchedSkills: jobEval.matchedSkills,
       skillEligible: jobEval.skillEligible,
       hardBlocked: jobEval.hardBlocked,
+      cityMatchStatus: jobEval.cityMatchStatus,
+      targetCities: jobEval.targetCities,
+      matchedCities: jobEval.matchedCities,
+      foundCities: jobEval.foundCities,
       compensationScore: jobEval.compensationScore,
       compensationLabel: jobEval.compensationLabel,
       confidence: Math.max(95, companyEval.confidence || 0),
@@ -243,6 +248,57 @@ async function prepareJobDetail(profile, job) {
     prepared: intentionReady && cityReady && !missingDepartment,
     selected,
     missingDepartment
+  };
+}
+
+function verifyCurrentJobLocation(profile = {}, job = {}) {
+  const targetCities = ResumePilotCities.split(profile.targetCity).filter((city) => city !== "不限");
+  if (!targetCities.length || ResumePilotCities.isUnlimited(profile.targetCity)) {
+    return { status: "unrestricted", confirmed: true, targetCities: [], matchedCities: [], foundCities: [], evidence: [] };
+  }
+
+  // 详情页必须用详情本身的地点证据重新判断，不能让列表卡片上的宽泛地点覆盖
+  // 当前岗位详情。只有华为等官方岗位接口返回的结构化地点可直接作为补充证据。
+  const snippets = [document.title].filter(Boolean);
+  if (job.officialJobId && job.preferredCity) snippets.push(`工作地点：${job.preferredCity}`);
+  const selectors = [
+    "h1", "h2", "[class*='location']", "[class*='address']", "[class*='workplace']",
+    "[class*='work-place']", "[class*='job-detail']", "[class*='position-detail']",
+    "[class*='job_description']", "[class*='job-description']", "article"
+  ];
+  for (const element of document.querySelectorAll(selectors.join(","))) {
+    if (!isVisible(element)) continue;
+    const text = String(element.innerText || element.textContent || "").replace(/\s+/g, " ").trim();
+    if (text.length >= 2 && text.length <= 6000) snippets.push(text);
+  }
+  for (const element of document.querySelectorAll("p, li, div, span, td, dd")) {
+    if (!isVisible(element)) continue;
+    const text = String(element.innerText || element.textContent || "").replace(/\s+/g, " ").trim();
+    if (text.length >= 2 && text.length <= 800 && /(?:工作地点|办公地点|职位地点|所在城市|工作城市|地点|城市|location|workplace|address)/i.test(text)) snippets.push(text);
+  }
+  const bodyText = String(document.body?.innerText || document.body?.textContent || "").replace(/\r/g, "");
+  for (const match of bodyText.matchAll(/(?:工作地点|办公地点|职位地点|所在城市|工作城市|location|workplace|address)\s*[:：]?\s*[^\n。；;]{1,180}/gi)) {
+    snippets.push(match[0].replace(/\s+/g, " ").trim());
+  }
+  for (const script of document.querySelectorAll("script[type='application/ld+json']")) {
+    const text = String(script.textContent || "").trim();
+    if (/JobPosting|jobLocation|addressLocality/i.test(text) && text.length <= 20000) snippets.push(text);
+  }
+
+  const evidenceText = [...new Set(snippets)].join(" \n");
+  const analysis = ResumePilotCities.analyze(evidenceText, profile.targetCity);
+  const evidence = [...new Set(snippets.filter((snippet) =>
+    [...analysis.matched, ...(analysis.foundCities || [])].some((city) => snippet.includes(city))
+      || /(?:工作地点|办公地点|职位地点|工作城市|location|workplace|jobLocation|addressLocality|全国|远程)/i.test(snippet)
+  ))].slice(0, 4).map((item) => item.slice(0, 240));
+  return {
+    status: analysis.status,
+    confirmed: ["matched", "flexible", "unrestricted"].includes(analysis.status),
+    targetCities: analysis.cities,
+    matchedCities: analysis.matched,
+    foundCities: analysis.foundCities || [],
+    flexible: analysis.flexible,
+    evidence
   };
 }
 
@@ -1243,6 +1299,10 @@ function scanJobList(profile) {
       matchedSkills: jobEval.matchedSkills,
       skillEligible: jobEval.skillEligible,
       hardBlocked: jobEval.hardBlocked,
+      cityMatchStatus: jobEval.cityMatchStatus,
+      targetCities: jobEval.targetCities,
+      matchedCities: jobEval.matchedCities,
+      foundCities: jobEval.foundCities,
       compensationScore: jobEval.compensationScore,
       compensationLabel: jobEval.compensationLabel,
       confidence: companyEval.confidence,
@@ -1283,6 +1343,10 @@ function scanJobList(profile) {
       matchedSkills: jobEval.matchedSkills,
       skillEligible: jobEval.skillEligible,
       hardBlocked: jobEval.hardBlocked,
+      cityMatchStatus: jobEval.cityMatchStatus,
+      targetCities: jobEval.targetCities,
+      matchedCities: jobEval.matchedCities,
+      foundCities: jobEval.foundCities,
       compensationScore: jobEval.compensationScore,
       compensationLabel: jobEval.compensationLabel,
       confidence: companyEval.confidence,

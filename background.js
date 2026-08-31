@@ -3,7 +3,10 @@ importScripts("city-preferences.js", "scoring.js");
 const SEARCH_URL = "https://www.bing.com/search?format=rss&q=";
 const AUTO_STATE_KEY = "autopilotState";
 const JOB_WATCH_ALARM = "resume-pilot-job-watch";
-const RECRUITMENT_DISCOVERY_SITES = ["zhipin.com", "zhaopin.com", "51job.com", "liepin.com", "shixiseng.com"];
+const RECRUITMENT_DISCOVERY_SITES = [
+  "zhipin.com", "zhaopin.com", "51job.com", "liepin.com", "shixiseng.com",
+  "lagou.com", "nowcoder.com", "yingjiesheng.com"
+];
 let autopilotState = null;
 let autoStepBusy = false;
 
@@ -170,7 +173,7 @@ async function searchOfficialCareers(criteria = {}) {
   const skills = splitList(criteria.skills).slice(0, 8);
   const preferredCompanies = splitList(criteria.preferredCompanies).slice(0, 8);
   const page = Math.max(0, Number(criteria.page || 0));
-  const pageSize = 6;
+  const pageSize = 10;
   const roleForQuery = (index = 0) => roleTerms.length ? roleTerms[(page + index) % roleTerms.length] : "校园招聘";
   const cityForQuery = (index = 0) => cityTerms.length ? cityTerms[(page + index) % cityTerms.length] : "";
 
@@ -179,20 +182,22 @@ async function searchOfficialCareers(criteria = {}) {
   const companyQueries = preferredCompanies.map((company, index) =>
     `${company} ${roleForQuery(index)} ${cityForQuery(index)} ${positionType} 职位 官方招聘`
   );
-  const seedQueries = pageSeeds.slice(0, 3).map((seed, index) =>
+  const seedQueries = pageSeeds.slice(0, 5).map((seed, index) =>
     `site:${seed.domain} ${roleForQuery(index)} ${cityForQuery(index)} ${positionType}`
   );
   const discoveryQueries = [
     `${roleForQuery(0)} ${cityForQuery(0)} ${industry} ${positionType} 职位 官方招聘 careers`,
-    `${roleForQuery(1)} ${cityForQuery(1)} ${industry} ${positionType} 行业龙头 上市公司 科技公司 官方招聘`
+    `${roleForQuery(1)} ${cityForQuery(1)} ${industry} ${positionType} 科技有限公司 官方招聘`,
+    `${roleForQuery(2)} ${cityForQuery(2)} ${positionType} 成长型企业 初创公司 招聘官网`,
+    `${roleForQuery(3)} ${cityForQuery(3)} ${industry} ${positionType} 中小企业 校园招聘 实习`
   ];
-  const queries = [...new Set([...(page === 0 ? companyQueries : []), ...seedQueries, ...(page === 0 ? discoveryQueries : [])])].slice(0, 7);
+  const queries = [...new Set([...(page === 0 ? companyQueries : []), ...seedQueries, ...discoveryQueries])].slice(0, 10);
 
   const offset = page * 10;
   const batches = await Promise.all(queries.map((query) => fetchRssResults(query, offset).catch(() => [])));
   const liveDiscovery = await discoverLiveCareerResults({ role: roleForQuery(2), city: cityForQuery(2), industry, positionType }, page).catch(() => ({ results: [], companyNames: [] }));
   const { jobWatchState = {} } = await chrome.storage.local.get("jobWatchState");
-  const watched = (jobWatchState.candidates || []).slice(page * 4, page * 4 + 4);
+  const watched = (jobWatchState.candidates || []).slice(page * 8, page * 8 + 8);
   const deduped = new Map();
 
   for (const seed of pageSeeds) {
@@ -210,16 +215,20 @@ async function searchOfficialCareers(criteria = {}) {
     }
   }
 
-  const ranked = [...deduped.values()].sort((a, b) => b.score - a.score);
+  const cityPriority = { matched: 4, flexible: 3, unrestricted: 2, unknown: 1, mismatch: 0 };
+  const ranked = [...deduped.values()].sort((a, b) =>
+    Number(cityPriority[b.cityMatchStatus] || 0) - Number(cityPriority[a.cityMatchStatus] || 0)
+      || b.score - a.score
+  );
   const preferredNames = new Set(preferredCompanies);
   const preferredResults = ranked.filter((item) => [...preferredNames].some((name) => item.company?.includes(name) || name.includes(item.company || "")));
   const diversifiedResults = interleaveBySegment(ranked.filter((item) => !preferredResults.includes(item)));
-  const results = [...new Map([...preferredResults, ...diversifiedResults].map((item) => [canonicalUrl(item.url), item])).values()].slice(0, 24);
+  const results = [...new Map([...preferredResults, ...diversifiedResults].map((item) => [canonicalUrl(item.url), item])).values()].slice(0, 36);
   return {
     results,
     page,
     hasMore: (page + 1) * pageSize < matchedSeeds.length
-      || (page + 1) * 4 < (jobWatchState.candidates || []).length
+      || (page + 1) * 8 < (jobWatchState.candidates || []).length
       || (page < 49 && liveDiscovery.results.length > 0),
     totalCompanies: matchedSeeds.length + (jobWatchState.candidates || []).length + liveDiscovery.companyNames.length,
     newlyDiscoveredCompanies: liveDiscovery.companyNames
@@ -229,26 +238,26 @@ async function searchOfficialCareers(criteria = {}) {
 async function discoverLiveCareerResults(criteria, page = 0) {
   const sites = RECRUITMENT_DISCOVERY_SITES
     .map((_, index, all) => all[(index + page) % all.length])
-    .slice(0, 3);
-  const listingQueries = sites.map((site) =>
-    `site:${site} ${criteria.role} ${criteria.city} ${criteria.industry} ${criteria.positionType}`
+    .slice(0, 4);
+  const listingQueries = sites.map((site, index) =>
+    `site:${site} ${criteria.role} ${criteria.city} ${criteria.industry} ${criteria.positionType} ${index % 2 ? "科技有限公司" : "初创 成长型 中小企业"}`
   );
   const listingBatches = await Promise.all(listingQueries.map((query) => fetchRssResults(query, page * 10).catch(() => [])));
-  const companyNames = [...new Set(listingBatches.flat().map(extractCompanyNameFromListing).filter(Boolean))].slice(0, 6);
+  const companyNames = [...new Set(listingBatches.flat().map(extractCompanyNameFromListing).filter(Boolean))].slice(0, 10);
   const verifiedBatches = await Promise.all(companyNames.map(async (company) => {
-    const query = `${company} 官方招聘 校园招聘 实习 careers`;
+    const query = `${company} ${criteria.role} ${criteria.city} 官方招聘 校园招聘 实习 careers`;
     const results = await fetchRssResults(query).catch(() => []);
     return results
       .filter((item) => isOfficialCareerForCompany(item, company))
       .slice(0, 2)
-      .map((item) => ({ ...item, companyHint: company, entryKind: "discoveredCareer" }));
+      .map((item) => ({ ...item, companyHint: company, companySegmentHint: "中小企业", entryKind: "discoveredCareer" }));
   }));
   return { results: verifiedBatches.flat(), companyNames };
 }
 
 function extractCompanyNameFromListing(item = {}) {
   const text = clean(`${item.title || ""} ${item.description || ""}`)
-    .replace(/BOSS直聘|智联招聘|前程无忧|猎聘|实习僧/gi, " ");
+    .replace(/BOSS直聘|智联招聘|前程无忧|猎聘|实习僧|拉勾|牛客|应届生求职/gi, " ");
   const legalNames = [...text.matchAll(/([\u4e00-\u9fa5A-Za-z0-9·（）()]{2,36}(?:股份有限公司|有限责任公司|有限公司|集团公司|集团|科技公司|网络公司|通信公司|软件公司))/g)]
     .map((match) => clean(match[1]).replace(/^(?:职位|岗位|招聘|诚聘|急聘)[:：\s-]*/, ""))
     .filter((name) => name.length >= 3 && name.length <= 36 && !/(招聘平台|人力资源|劳务派遣)/.test(name));
@@ -289,7 +298,7 @@ function selectSeeds(industry, preferredCompanies) {
 }
 
 function interleaveBySegment(items) {
-  const order = ["新发现企业", "成长型企业", "外企", "行业企业", "大型民企", "大型企业", "金融企业", "其他企业", "待分类"];
+  const order = ["中小企业", "新发现企业", "成长型企业", "外企", "行业企业", "大型民企", "大型企业", "金融企业", "其他企业", "待分类"];
   const groups = new Map();
   for (const item of items) {
     const key = item.segment || item.companySegment || "其他企业";
@@ -442,7 +451,7 @@ function enrichResult(item, criteria) {
   return {
     ...item,
     company: seed?.company || item.companyHint || companyEval.company || inferCompany(item),
-    companySegment: seed?.segment || knownProfile?.segment || (item.companyHint ? "新发现企业" : "待分类"),
+    companySegment: seed?.segment || knownProfile?.segment || item.companySegmentHint || (item.companyHint ? "新发现企业" : "待分类"),
     resultType: item.entryKind === "jobList" ? "岗位列表" : (isPosition ? "具体岗位" : "招聘入口"),
     score,
     companyScore: companyEval.companyScore,
@@ -450,6 +459,10 @@ function enrichResult(item, criteria) {
     matchedSkills: jobEval.matchedSkills,
     skillEligible: jobEval.skillEligible,
     hardBlocked: jobEval.hardBlocked,
+    cityMatchStatus: jobEval.cityMatchStatus,
+    targetCities: jobEval.targetCities,
+    matchedCities: jobEval.matchedCities,
+    foundCities: jobEval.foundCities,
     compensationScore: jobEval.compensationScore,
     compensationLabel: jobEval.compensationLabel,
     confidence: companyEval.confidence,
@@ -752,6 +765,7 @@ async function openAutoCandidate(tabId, candidate, message = "") {
   autopilotState.stage = "job";
   autopilotState.resumeStage = "job";
   autopilotState.jobOpenChecks = 0;
+  autopilotState.locationChecks = 0;
   autopilotState.loginAttempts = 0;
   autopilotState.resumeCreateSteps = 0;
   autopilotState.resumeCreateIdleChecks = 0;
@@ -887,6 +901,40 @@ async function autoJobStage(tabId) {
   }
   autopilotState.jobOpenChecks = 0;
   autopilotState.pendingJobOpen = null;
+  const locationCheck = await sendTabMessage(tabId, {
+    type: "VERIFY_JOB_LOCATION",
+    profile: autopilotState.profile,
+    job: autopilotState.currentJob || {}
+  });
+  if (locationCheck.status === "unknown") {
+    const checks = Number(autopilotState.locationChecks || 0);
+    if (checks < 2) {
+      autopilotState.locationChecks = checks + 1;
+      autopilotState.lastMessage = `正在读取岗位详情中的工作地点（${autopilotState.locationChecks}/2），确认符合后才会投递`;
+      await persistAutopilot();
+      scheduleAutoStep(tabId, 850);
+      return;
+    }
+    autopilotState.skipped += 1;
+    await addHistory("city_unconfirmed", `岗位详情未能确认工作地点；期望：${(locationCheck.targetCities || []).join("、")}`);
+    return moveToNextJobInCompany(`无法确认工作地点是否符合 ${(locationCheck.targetCities || []).join("、")}，已安全跳过`);
+  }
+  if (locationCheck.status === "mismatch") {
+    autopilotState.skipped += 1;
+    await addHistory("city_mismatch", `工作地点不匹配；发现：${(locationCheck.foundCities || []).join("、")}；期望：${(locationCheck.targetCities || []).join("、")}`);
+    return moveToNextJobInCompany(`工作地点为 ${(locationCheck.foundCities || []).join("、") || "其他城市"}，不符合 ${(locationCheck.targetCities || []).join("、")}，已跳过`);
+  }
+  autopilotState.locationChecks = 0;
+  autopilotState.currentJob = {
+    ...(autopilotState.currentJob || {}),
+    cityMatchStatus: locationCheck.status,
+    matchedCities: locationCheck.matchedCities || [],
+    locationEvidence: locationCheck.evidence || []
+  };
+  autopilotState.lastMessage = locationCheck.status === "matched"
+    ? `已确认工作地点符合：${(locationCheck.matchedCities || []).join("、")}`
+    : (locationCheck.status === "flexible" ? "已确认该岗位支持全国/远程地点" : "目标城市不限，继续投递");
+  await persistAutopilot();
   const detailPreparation = await sendTabMessage(tabId, {
     type: "PREPARE_JOB_DETAIL",
     profile: autopilotState.profile,

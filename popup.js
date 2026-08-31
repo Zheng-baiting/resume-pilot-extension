@@ -399,6 +399,8 @@ function historyStatus(status) {
     submitted: "投递成功",
     submitted_unverified: "已提交待核验",
     no_matching_job: "无匹配岗位",
+    city_mismatch: "地点不匹配",
+    city_unconfirmed: "地点未确认",
     skipped_captcha: "验证码跳过"
   };
   return labels[status] || status;
@@ -500,7 +502,9 @@ function renderResults(items) {
     const companyBadge = makeBadge(`企业 ${item.companyScore ?? "?"}`);
     const jobBadge = makeBadge(`匹配 ${item.jobScore ?? item.score ?? "?"}`);
     const payBadge = makeBadge(`待遇 ${item.compensationScore ?? "?"}`, "pay");
-    badges.append(companyBadge, jobBadge, payBadge);
+    const cityLabels = { matched: "地点符合", flexible: "全国/远程", unrestricted: "地点不限", unknown: "进详情核验", mismatch: "地点不符" };
+    const cityBadge = makeBadge(cityLabels[item.cityMatchStatus] || "进官网核验", item.cityMatchStatus === "matched" ? "city" : "");
+    badges.append(companyBadge, jobBadge, payBadge, cityBadge);
     titleRow.append(link, badges);
     const description = document.createElement("p");
     description.textContent = item.description;

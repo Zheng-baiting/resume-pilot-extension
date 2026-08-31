@@ -62,9 +62,23 @@
     return { cities, matched, unrestricted };
   }
 
+  function analyze(text = "", value = "") {
+    const preference = match(text, value);
+    if (preference.unrestricted) {
+      return { ...preference, status: "unrestricted", foundCities: [], flexible: false };
+    }
+    const haystack = String(text).toLowerCase();
+    const foundCities = popularCities.filter((city) => haystack.includes(city.toLowerCase()));
+    const flexible = /(?:全国(?:可选|多地|岗位|招聘)?|工作地点不限|地点不限|远程办公|远程岗位|remote(?:\s+work)?)/i.test(haystack);
+    const status = preference.matched.length
+      ? "matched"
+      : (flexible ? "flexible" : (foundCities.length ? "mismatch" : "unknown"));
+    return { ...preference, status, foundCities, flexible };
+  }
+
   function first(value = "") {
     return isUnlimited(value) ? "" : (split(value).find((city) => city !== "不限") || "");
   }
 
-  global.ResumePilotCities = { popularCities, split, normalize, toggle, isUnlimited, forSearch, match, first };
+  global.ResumePilotCities = { popularCities, split, normalize, toggle, isUnlimited, forSearch, match, analyze, first };
 })(globalThis);

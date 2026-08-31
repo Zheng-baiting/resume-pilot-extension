@@ -47,6 +47,26 @@ try {
     assert.ok(result.cards + result.links > 0, `${name}: no job opening capability`);
     await page.close();
   }
+  const locationPage = await browser.newPage();
+  await locationPage.addInitScript(() => {
+    globalThis.chrome = {
+      runtime: { onMessage: { addListener() {} }, sendMessage: async () => ({ ok: true }) },
+      storage: { local: { get: async () => ({}), set: async () => {} } }
+    };
+  });
+  await locationPage.setContent(`<main><h1>软件开发实习生</h1><p class="job-location">工作地点：北京</p><section class="job-detail">使用 JavaScript 开发业务系统</section></main>`);
+  await locationPage.addScriptTag({ path: `${root}/city-preferences.js` });
+  await locationPage.addScriptTag({ path: `${root}/scoring.js` });
+  await locationPage.addScriptTag({ path: `${root}/main-click.js` });
+  await locationPage.addScriptTag({ path: `${root}/content.js` });
+  const locationMismatch = await locationPage.evaluate(() => verifyCurrentJobLocation({ targetCity: "上海、杭州" }, { title: "软件开发实习生" }));
+  assert.equal(locationMismatch.status, "mismatch", JSON.stringify(locationMismatch));
+  assert.deepEqual(locationMismatch.foundCities, ["北京"]);
+  await locationPage.locator(".job-location").evaluate((element) => { element.textContent = "工作地点：杭州"; });
+  const locationMatch = await locationPage.evaluate(() => verifyCurrentJobLocation({ targetCity: "上海、杭州" }, { title: "软件开发实习生" }));
+  assert.equal(locationMatch.status, "matched");
+  assert.deepEqual(locationMatch.matchedCities, ["杭州"]);
+  await locationPage.close();
   console.log("ten-company recruitment flow tests passed");
 } finally {
   await browser.close();

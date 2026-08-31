@@ -9,7 +9,7 @@ const fetchedUrls = [];
 const context = {
   chrome: {
     runtime: {
-      getManifest: () => ({ version: "0.17.0" }),
+      getManifest: () => ({ version: "0.18.0" }),
       onMessage: { addListener() {} },
       onInstalled: { addListener() {} },
       onStartup: { addListener() {} }
@@ -37,8 +37,12 @@ const context = {
 vm.createContext(context);
 vm.runInContext(fs.readFileSync(`${root}/city-preferences.js`, "utf8"), context);
 vm.runInContext(fs.readFileSync(`${root}/scoring.js`, "utf8"), context);
-vm.runInContext(fs.readFileSync(`${root}/background.js`, "utf8"), context);
+const backgroundSource = fs.readFileSync(`${root}/background.js`, "utf8");
+vm.runInContext(backgroundSource, context);
 await new Promise((resolve) => setTimeout(resolve, 0));
+assert.match(backgroundSource, /type: "VERIFY_JOB_LOCATION"/);
+assert.match(backgroundSource, /city_unconfirmed/);
+assert.match(backgroundSource, /city_mismatch/);
 
 const firstPage = vm.runInContext("selectSeeds('通信、人工智能', []).slice(0, 8).map(({ company, segment }) => ({ company, segment }))", context);
 assert.ok(new Set(firstPage.map((item) => item.segment)).size >= 4, JSON.stringify(firstPage));
@@ -51,6 +55,7 @@ const discoveredName = vm.runInContext(`extractCompanyNameFromListing({
 })`, context);
 assert.equal(discoveredName, "示例网络科技有限公司");
 assert.equal(vm.runInContext("isRecruitmentDiscoveryUrl('https://www.zhipin.com/job_detail/123')", context), true);
+assert.equal(vm.runInContext("isRecruitmentDiscoveryUrl('https://www.lagou.com/jobs/123')", context), true);
 assert.equal(createdAlarm?.name, "resume-pilot-job-watch");
 assert.equal(createdAlarm?.options?.delayInMinutes, 2);
 assert.equal(createdAlarm?.options?.periodInMinutes, 30);
@@ -60,6 +65,7 @@ const decodedQueries = fetchedUrls.map((url) => decodeURIComponent(url));
 assert.ok(decodedQueries.some((url) => url.includes("上海")), decodedQueries.join("\n"));
 assert.ok(decodedQueries.some((url) => url.includes("杭州")), decodedQueries.join("\n"));
 assert.ok(!decodedQueries.some((url) => url.includes("上海、杭州")), decodedQueries.join("\n"));
+assert.ok(decodedQueries.some((url) => url.includes("中小企业") || url.includes("成长型企业")), decodedQueries.join("\n"));
 
 fetchedUrls.length = 0;
 await vm.runInContext("searchOfficialCareers({ role: '软件开发', city: '不限', industry: '互联网', positionType: '实习', page: 0 })", context);
