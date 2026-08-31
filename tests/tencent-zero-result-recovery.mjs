@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
-import { chromium } from "playwright";
+
+const playwrightModule = process.env.PLAYWRIGHT_MODULE || "playwright";
+const { chromium } = await import(playwrightModule);
 
 const root = fileURLToPath(new URL("../", import.meta.url)).replace(/\\/g, "/").replace(/\/$/, "");
 const browser = await chromium.launch({
