@@ -5,10 +5,11 @@ import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 let createdAlarm = null;
+const fetchedUrls = [];
 const context = {
   chrome: {
     runtime: {
-      getManifest: () => ({ version: "0.14.0" }),
+      getManifest: () => ({ version: "0.15.0" }),
       onMessage: { addListener() {} },
       onInstalled: { addListener() {} },
       onStartup: { addListener() {} }
@@ -24,13 +25,17 @@ const context = {
     }
   },
   importScripts() {},
-  fetch: async () => ({ ok: true, text: async () => "<rss><channel></channel></rss>" }),
+  fetch: async (url) => {
+    fetchedUrls.push(String(url));
+    return { ok: true, text: async () => "<rss><channel></channel></rss>" };
+  },
   URL,
   console,
   setTimeout,
   clearTimeout
 };
 vm.createContext(context);
+vm.runInContext(fs.readFileSync(`${root}/city-preferences.js`, "utf8"), context);
 vm.runInContext(fs.readFileSync(`${root}/scoring.js`, "utf8"), context);
 vm.runInContext(fs.readFileSync(`${root}/background.js`, "utf8"), context);
 await new Promise((resolve) => setTimeout(resolve, 0));
@@ -49,5 +54,15 @@ assert.equal(vm.runInContext("isRecruitmentDiscoveryUrl('https://www.zhipin.com/
 assert.equal(createdAlarm?.name, "resume-pilot-job-watch");
 assert.equal(createdAlarm?.options?.delayInMinutes, 2);
 assert.equal(createdAlarm?.options?.periodInMinutes, 30);
+
+await vm.runInContext("searchOfficialCareers({ role: '软件开发', city: '上海、杭州', industry: '互联网', positionType: '实习', page: 0 })", context);
+const decodedQueries = fetchedUrls.map((url) => decodeURIComponent(url));
+assert.ok(decodedQueries.some((url) => url.includes("上海")), decodedQueries.join("\n"));
+assert.ok(decodedQueries.some((url) => url.includes("杭州")), decodedQueries.join("\n"));
+assert.ok(!decodedQueries.some((url) => url.includes("上海、杭州")), decodedQueries.join("\n"));
+
+fetchedUrls.length = 0;
+await vm.runInContext("searchOfficialCareers({ role: '软件开发', city: '不限', industry: '互联网', positionType: '实习', page: 0 })", context);
+assert.ok(!fetchedUrls.map((url) => decodeURIComponent(url)).some((url) => url.includes("不限")));
 
 console.log("company diversity and watch tests passed");

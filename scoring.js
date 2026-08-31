@@ -259,7 +259,10 @@
     const haystack = `${text || ""} ${url || ""}`.toLowerCase();
     const roleTerms = splitTerms(profile.targetRole);
     const skillTerms = splitTerms(profile.skills);
-    const city = clean(profile.targetCity);
+    const cityPreference = global.ResumePilotCities?.match(haystack, profile.targetCity) || (() => {
+      const cities = splitList(profile.targetCity).filter((city) => !/^(?:不限|全国|任意城市?)$/i.test(city));
+      return { cities, matched: cities.filter((city) => haystack.includes(city.toLowerCase())), unrestricted: !cities.length };
+    })();
     const positionType = clean(profile.positionType);
     const graduationYear = clean(profile.graduationYear);
     const reasons = [];
@@ -285,10 +288,15 @@
       warnings.push("尚未填写目标岗位");
     }
 
-    if (city) {
-      if (haystack.includes(city.toLowerCase())) { score += 15; reasons.push(`地点：${city}`); }
-      else warnings.push("地点未确认");
-    } else score += 7;
+    if (!cityPreference.unrestricted) {
+      if (cityPreference.matched.length) {
+        score += 15;
+        reasons.push(`地点：${cityPreference.matched.slice(0, 3).join("、")}`);
+      } else warnings.push(`地点未确认（期望：${cityPreference.cities.slice(0, 4).join("、")}）`);
+    } else {
+      score += 7;
+      if (global.ResumePilotCities?.isUnlimited(profile.targetCity)) reasons.push("地点不限");
+    }
 
     const matchedSkills = skillTerms.filter((term) => skillTermMatches(haystack, term));
     if (skillTerms.length) {

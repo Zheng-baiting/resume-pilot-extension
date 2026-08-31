@@ -16,6 +16,7 @@ const renderedUrls = new Set();
 document.addEventListener("DOMContentLoaded", async () => {
   bindTabs();
   bindActions();
+  bindCityPicker();
   await restoreProfile();
   await restoreResumeFile();
   await restoreLatestScan();
@@ -60,13 +61,51 @@ async function restoreProfile() {
       else element.value = profile[field];
     }
   }
+  syncCityPicker();
 }
 
 function collectProfile() {
-  return Object.fromEntries(PROFILE_FIELDS.map((field) => {
+  const profile = Object.fromEntries(PROFILE_FIELDS.map((field) => {
     const element = document.getElementById(field);
     return [field, element.type === "checkbox" ? element.checked : element.value.trim()];
   }));
+  profile.targetCity = ResumePilotCities.normalize(profile.targetCity);
+  document.getElementById("targetCity").value = profile.targetCity;
+  syncCityPicker();
+  return profile;
+}
+
+function bindCityPicker() {
+  const container = document.getElementById("targetCityOptions");
+  const input = document.getElementById("targetCity");
+  for (const city of ["不限", ...ResumePilotCities.popularCities]) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `city-option${city === "不限" ? " unlimited" : ""}`;
+    button.dataset.city = city;
+    button.textContent = city;
+    button.setAttribute("aria-pressed", "false");
+    button.addEventListener("click", () => {
+      input.value = ResumePilotCities.toggle(input.value, city);
+      syncCityPicker();
+    });
+    container.append(button);
+  }
+  input.addEventListener("input", syncCityPicker);
+  input.addEventListener("blur", () => {
+    input.value = ResumePilotCities.normalize(input.value);
+    syncCityPicker();
+  });
+}
+
+function syncCityPicker() {
+  const input = document.getElementById("targetCity");
+  const selected = new Set(ResumePilotCities.split(input?.value).map((city) => city.toLowerCase()));
+  document.querySelectorAll(".city-option").forEach((button) => {
+    const active = selected.has(String(button.dataset.city || "").toLowerCase());
+    button.classList.toggle("selected", active);
+    button.setAttribute("aria-pressed", String(active));
+  });
 }
 
 async function saveProfile() {
@@ -97,6 +136,7 @@ function parseResumeText(options = {}) {
       filled += 1;
     }
   });
+  syncCityPicker();
   if (!options.silent) flash("已识别可确认的信息，请检查后保存");
   return filled;
 }
@@ -117,6 +157,7 @@ async function importResumeFile(event) {
           else element.value = String(data[field]);
         }
       }
+      syncCityPicker();
       await saveProfile();
       flash("JSON 资料已导入并保存在本机，请检查内容");
       return;

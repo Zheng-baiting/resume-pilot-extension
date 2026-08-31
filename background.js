@@ -1,4 +1,4 @@
-importScripts("scoring.js");
+importScripts("city-preferences.js", "scoring.js");
 
 const SEARCH_URL = "https://www.bing.com/search?format=rss&q=";
 const AUTO_STATE_KEY = "autopilotState";
@@ -162,31 +162,33 @@ async function handleRuntimeMessage(message, sender) {
 
 async function searchOfficialCareers(criteria = {}) {
   const role = clean(criteria.role) || "校园招聘";
-  const city = clean(criteria.city);
+  const city = ResumePilotCities.forSearch(criteria.city);
+  const cityTerms = ResumePilotCities.split(city);
   const industry = clean(criteria.industry);
   const positionType = clean(criteria.positionType) || "实习";
   const skills = splitList(criteria.skills).slice(0, 8);
   const preferredCompanies = splitList(criteria.preferredCompanies).slice(0, 8);
   const page = Math.max(0, Number(criteria.page || 0));
   const pageSize = 6;
+  const cityForQuery = (index = 0) => cityTerms.length ? cityTerms[(page + index) % cityTerms.length] : "";
 
   const matchedSeeds = selectSeeds(industry, preferredCompanies);
   const pageSeeds = matchedSeeds.slice(page * pageSize, (page + 1) * pageSize);
-  const companyQueries = preferredCompanies.map((company) =>
-    `${company} ${role} ${city} ${positionType} 职位 官方招聘`
+  const companyQueries = preferredCompanies.map((company, index) =>
+    `${company} ${role} ${cityForQuery(index)} ${positionType} 职位 官方招聘`
   );
-  const seedQueries = pageSeeds.slice(0, 3).map((seed) =>
-    `site:${seed.domain} ${role} ${city} ${positionType}`
+  const seedQueries = pageSeeds.slice(0, 3).map((seed, index) =>
+    `site:${seed.domain} ${role} ${cityForQuery(index)} ${positionType}`
   );
   const discoveryQueries = [
-    `${role} ${city} ${industry} ${positionType} 职位 官方招聘 careers`,
-    `${role} ${city} ${industry} ${positionType} 行业龙头 上市公司 科技公司 官方招聘`
+    `${role} ${cityForQuery(0)} ${industry} ${positionType} 职位 官方招聘 careers`,
+    `${role} ${cityForQuery(1)} ${industry} ${positionType} 行业龙头 上市公司 科技公司 官方招聘`
   ];
   const queries = [...new Set([...(page === 0 ? companyQueries : []), ...seedQueries, ...(page === 0 ? discoveryQueries : [])])].slice(0, 7);
 
   const offset = page * 10;
   const batches = await Promise.all(queries.map((query) => fetchRssResults(query, offset).catch(() => [])));
-  const liveDiscovery = await discoverLiveCareerResults({ role, city, industry, positionType }, page).catch(() => ({ results: [], companyNames: [] }));
+  const liveDiscovery = await discoverLiveCareerResults({ role, city: cityForQuery(2), industry, positionType }, page).catch(() => ({ results: [], companyNames: [] }));
   const { jobWatchState = {} } = await chrome.storage.local.get("jobWatchState");
   const watched = (jobWatchState.candidates || []).slice(page * 4, page * 4 + 4);
   const deduped = new Map();

@@ -50,9 +50,11 @@
       </section>
 
       <section id="search" class="panel">
-        <div class="grid">
-          <label>目标岗位<input id="targetRole" placeholder="前端开发实习生" /></label>
-          <label>目标城市<input id="targetCity" placeholder="上海" /></label>
+        <label>目标岗位<input id="targetRole" placeholder="前端开发实习生" /></label>
+        <div class="city-picker">
+          <label>目标城市<input id="targetCity" placeholder="可手动输入，如：上海、杭州" /></label>
+          <div id="targetCityOptions" class="city-options" role="group" aria-label="常用目标城市"></div>
+          <div class="search-hint">点击可选择一个或多个城市；再次点击可取消。也可在输入框手动填写，选择“不限”后不限制岗位城市。</div>
         </div>
         <label>求职类型<select id="positionType"><option>实习</option><option>校园招聘</option><option>不限</option></select></label>
         <label>目标行业<input id="targetIndustry" placeholder="互联网、人工智能" /></label>
@@ -109,6 +111,7 @@
 
     <footer><span id="saveStatus"></span><span>本地存储</span></footer>
     <script src="vendor/mammoth.browser.min.js"></script>
+    <script src="city-preferences.js"></script>
     <script src="resume-import.js"></script>
     <script src="popup.js"></script>
   </body>

@@ -12,7 +12,7 @@ const FIELD_RULES = [
   { key: "targetCity", patterns: [/期望.*城市|意向.*地点|工作.*地点|desired.*location|preferred.*city/i] },
   { key: "resumeText", patterns: [/个人.*总结|自我.*评价|个人.*简介|summary|profile/i] }
 ];
-const CONTENT_SCRIPT_VERSION = "0.14.0";
+const CONTENT_SCRIPT_VERSION = "0.15.0";
 const MAX_COLLECTED_JOBS = 200;
 const MAX_JOB_PAGES = 20;
 
@@ -141,7 +141,9 @@ async function scanHuaweiOfficialJobs(profile) {
       return b.evaluation.jobScore - a.evaluation.jobScore;
     });
     const preferred = rankedIntentions[0]?.item || null;
-    const desiredCities = splitTerms(`${profile.targetCity || ""} ${profile.currentCity || ""}`);
+    const desiredCities = ResumePilotCities.isUnlimited(profile.targetCity)
+      ? []
+      : [...new Set([...ResumePilotCities.split(profile.targetCity), ...ResumePilotCities.split(profile.currentCity)])];
     const availableCities = String(preferred?.jobPlaceName || job.workPlace || "").split(/[\s/,，、]+/).filter(Boolean);
     const preferredCity = desiredCities.find((city) => availableCities.some((value) => value.includes(city))) || availableCities[0] || "";
     const departments = preferred?.deptAndPlaceList || [];
@@ -207,7 +209,7 @@ async function prepareJobDetail(profile, job) {
 
   const cityInput = document.querySelector(".aui-tag-input input");
   if (cityInput && !document.querySelector(".aui-tag-input [class*='tag-item'], .aui-tag-input [class*='tag-label']")) {
-    selected.city = await selectHuaweiOption(cityInput, job.preferredCity || profile.targetCity || profile.currentCity || "");
+    selected.city = await selectHuaweiOption(cityInput, job.preferredCity || ResumePilotCities.first(profile.targetCity) || profile.currentCity || "");
     // 华为地点是多选控件，选择后弹层不会自行关闭；先点到弹层外再打开部门下拉。
     await closeHuaweiPopup();
     cityInput.blur();
