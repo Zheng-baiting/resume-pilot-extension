@@ -88,20 +88,12 @@ function parseResumeText(options = {}) {
     return 0;
   }
 
-  const email = text.match(/[\w.+-]+@[\w-]+(?:\.[\w-]+)+/i)?.[0];
-  const phone = text.match(/(?<!\d)(?:\+?86[- ]?)?1[3-9]\d{9}(?!\d)/)?.[0]?.replace(/\D/g, "").replace(/^86(?=1)/, "");
-  const year = text.match(/(?:毕业(?:时间|年份)?[:：\s]*)?(20[2-4]\d)(?:年)?/)?.[1];
-  const degree = ["博士", "硕士", "本科", "大专"].find((item) => text.includes(item));
-  const school = text.match(/([\u4e00-\u9fa5·]{2,20}(?:大学|学院))/)?.[1];
-  const major = text.match(/(?:专业|主修)[:：\s]*([^\n，,；;]{2,24})/)?.[1]?.trim();
-  const firstLine = text.split(/\r?\n/).map((line) => line.trim()).find(Boolean);
-  const fullName = firstLine && /^[\u4e00-\u9fa5·]{2,6}$/.test(firstLine) ? firstLine : "";
-
-  const values = { email, phone, graduationYear: year, degree, school, major, fullName };
+  const values = ResumePilotImport.parseResumeProfile(text, options.fileName || "");
   let filled = 0;
   Object.entries(values).forEach(([key, value]) => {
-    if (value && !document.getElementById(key).value) {
-      document.getElementById(key).value = value;
+    const element = document.getElementById(key);
+    if (value && element && (options.overwrite || !element.value)) {
+      element.value = String(value);
       filled += 1;
     }
   });
@@ -131,7 +123,7 @@ async function importResumeFile(event) {
     }
 
     document.getElementById("resumeText").value = result.text;
-    const recognized = parseResumeText({ silent: true });
+    const recognized = parseResumeText({ silent: true, fileName: file.name, overwrite: true });
     if (result.saveAsAttachment) await storeResumeAttachment(file);
     await saveProfile();
     flash(`已读取 ${file.name}，识别 ${recognized} 项并保存在本机`);

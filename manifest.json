@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "简历领航 Resume Pilot",
-  "version": "0.12.1",
+  "version": "0.13.0",
   "description": "先从简历生成岗位方向，再逐个调用企业官网筛选、排序并自动投递。",
   "permissions": ["storage", "tabs", "activeTab"],
   "host_permissions": ["https://www.bing.com/*"],

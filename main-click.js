@@ -1,5 +1,5 @@
 (function installMainWorldJobClickBridge() {
-  const BRIDGE_VERSION = "0.12.1";
+  const BRIDGE_VERSION = "0.13.0";
   const REQUEST_EVENT = "resume-pilot-open-job-main";
   const TOKEN_ATTRIBUTE = "data-resume-pilot-click-token";
   const RESULT_ATTRIBUTE = "data-resume-pilot-click-result";
