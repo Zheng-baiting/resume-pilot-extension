@@ -60,7 +60,14 @@
 
 ## 安装
 
-1. 用 7-Zip 解压下载的压缩包，进入解压后的 `resume-pilot-extension` 文件夹。
+### 版本与下载
+
+- 普通用户请从 [Latest Release](https://github.com/Zheng-baiting/resume-pilot-extension/releases/latest) 下载当前稳定安装包。
+- [全部历史版本](https://github.com/Zheng-baiting/resume-pilot-extension/releases) 按实际版本号分别提供源码标签、变更说明、SHA-256 和独立 ZIP。
+- `main` 分支保存从 v0.5.0 开始建立的正式 Git 开发历史；`legacy-history` 分支保存从原始安装包恢复的 v0.1.0–v0.4.0 早期快照。
+- 历史版本仅用于查看、研究或复现旧行为，新安装建议始终选择标记为 `Latest` 的版本。
+
+1. 用 7-Zip 解压下载的压缩包，进入解压后的 `resume-pilot-extension-vX.Y.Z` 版本文件夹。
 2. Chrome 打开 `chrome://extensions`；Edge 打开 `edge://extensions`。
 3. 打开“开发者模式”。
 4. 点击“加载已解压的扩展程序”，选择本文件夹。
