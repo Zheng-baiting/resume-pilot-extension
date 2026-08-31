@@ -54,8 +54,13 @@
         <div id="roleRecommendation" class="role-recommendation">导入或识别简历后，将自动填写合适的目标岗位。</div>
         <div class="city-picker">
           <label>目标城市<input id="targetCity" placeholder="可手动输入，如：上海、杭州" /></label>
-          <div id="targetCityOptions" class="city-options" role="group" aria-label="常用目标城市"></div>
-          <div class="search-hint">点击可选择一个或多个城市；再次点击可取消。也可在输入框手动填写，选择“不限”后不限制岗位城市。</div>
+          <button id="targetCityToggle" class="city-toggle" type="button" aria-expanded="false" aria-controls="targetCityDropdown">
+            <span>选择城市</span><span id="targetCitySummary" class="city-summary">未选择时不限</span><span class="city-chevron" aria-hidden="true">⌄</span>
+          </button>
+          <div id="targetCityDropdown" class="city-dropdown" hidden>
+            <div id="targetCityOptions" class="city-options" role="listbox" aria-label="常用目标城市" aria-multiselectable="true"></div>
+            <div class="search-hint">可选择一个或多个城市，再次点击可取消；也可在上方输入框手动填写。</div>
+          </div>
         </div>
         <label>求职类型<select id="positionType"><option>实习</option><option>校园招聘</option><option>不限</option></select></label>
         <label>目标行业<input id="targetIndustry" placeholder="互联网、人工智能" /></label>

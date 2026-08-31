@@ -12,7 +12,7 @@ const FIELD_RULES = [
   { key: "targetCity", patterns: [/期望.*城市|意向.*地点|工作.*地点|desired.*location|preferred.*city/i] },
   { key: "resumeText", patterns: [/个人.*总结|自我.*评价|个人.*简介|summary|profile/i] }
 ];
-const CONTENT_SCRIPT_VERSION = "0.16.0";
+const CONTENT_SCRIPT_VERSION = "0.17.0";
 const MAX_COLLECTED_JOBS = 200;
 const MAX_JOB_PAGES = 20;
 

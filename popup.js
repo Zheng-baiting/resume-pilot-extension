@@ -99,13 +99,17 @@ function collectProfile() {
 function bindCityPicker() {
   const container = document.getElementById("targetCityOptions");
   const input = document.getElementById("targetCity");
+  const picker = container.closest(".city-picker");
+  const toggle = document.getElementById("targetCityToggle");
+  const dropdown = document.getElementById("targetCityDropdown");
   for (const city of ["不限", ...ResumePilotCities.popularCities]) {
     const button = document.createElement("button");
     button.type = "button";
     button.className = `city-option${city === "不限" ? " unlimited" : ""}`;
     button.dataset.city = city;
     button.textContent = city;
-    button.setAttribute("aria-pressed", "false");
+    button.setAttribute("role", "option");
+    button.setAttribute("aria-selected", "false");
     button.addEventListener("click", () => {
       input.value = ResumePilotCities.toggle(input.value, city);
       syncCityPicker();
@@ -117,16 +121,35 @@ function bindCityPicker() {
     input.value = ResumePilotCities.normalize(input.value);
     syncCityPicker();
   });
+  toggle.addEventListener("click", () => setCityDropdown(dropdown.hidden));
+  document.addEventListener("click", (event) => {
+    if (!dropdown.hidden && !picker.contains(event.target)) setCityDropdown(false);
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !dropdown.hidden) {
+      setCityDropdown(false);
+      toggle.focus();
+    }
+  });
+}
+
+function setCityDropdown(open) {
+  const dropdown = document.getElementById("targetCityDropdown");
+  const toggle = document.getElementById("targetCityToggle");
+  dropdown.hidden = !open;
+  toggle.setAttribute("aria-expanded", String(open));
 }
 
 function syncCityPicker() {
   const input = document.getElementById("targetCity");
-  const selected = new Set(ResumePilotCities.split(input?.value).map((city) => city.toLowerCase()));
+  const cities = ResumePilotCities.split(input?.value);
+  const selected = new Set(cities.map((city) => city.toLowerCase()));
   document.querySelectorAll(".city-option").forEach((button) => {
     const active = selected.has(String(button.dataset.city || "").toLowerCase());
     button.classList.toggle("selected", active);
-    button.setAttribute("aria-pressed", String(active));
+    button.setAttribute("aria-selected", String(active));
   });
+  document.getElementById("targetCitySummary").textContent = cities.length ? cities.join("、") : "未选择时不限";
 }
 
 function bindRoleRecommendation() {

@@ -33,7 +33,14 @@ assert.ok(unrestricted.reasons.includes("地点不限"));
 assert.ok(!unrestricted.warnings.some((warning) => warning.includes("地点未确认")));
 
 const popup = fs.readFileSync(`${root}/popup.html`, "utf8");
+const popupScript = fs.readFileSync(`${root}/popup.js`, "utf8");
+const popupStyles = fs.readFileSync(`${root}/popup.css`, "utf8");
 assert.match(popup, /id="targetCityOptions"/);
 assert.match(popup, /可手动输入/);
+assert.match(popup, /id="targetCityToggle"/);
+assert.match(popup, /id="targetCityDropdown" class="city-dropdown" hidden/);
+assert.match(popupScript, /\["不限", \.\.\.ResumePilotCities\.popularCities\]/);
+assert.match(popupScript, /function setCityDropdown\(open\)/);
+assert.match(popupStyles, /\.city-options[^}]*max-height: 210px[^}]*overflow-y: auto/s);
 
 console.log("city preference tests passed");
