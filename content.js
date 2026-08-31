@@ -12,7 +12,7 @@ const FIELD_RULES = [
   { key: "targetCity", patterns: [/期望.*城市|意向.*地点|工作.*地点|desired.*location|preferred.*city/i] },
   { key: "resumeText", patterns: [/个人.*总结|自我.*评价|个人.*简介|summary|profile/i] }
 ];
-const CONTENT_SCRIPT_VERSION = "0.13.0";
+const CONTENT_SCRIPT_VERSION = "0.14.0";
 const MAX_COLLECTED_JOBS = 200;
 const MAX_JOB_PAGES = 20;
 
@@ -1387,6 +1387,7 @@ function buildSearchRecoveryTerms(searchTerm = "") {
 
 function looksLikeJob(text, url, roleTerms, positionType, skillTerms = []) {
   const haystack = `${text} ${url}`;
+  if (/(招聘已结束|职位已下线|岗位已下线|停止招聘|停止申请|不再接受申请|申请通道已关闭|已招满|position (?:is )?closed|job (?:is )?closed|expired|no longer accepting applications)/i.test(haystack)) return false;
   const jobSignal = /(职位|岗位|招聘|实习|校招|应届|工程师|开发|产品|运营|设计|算法|测试|job|position|career|intern|engineer|developer)/i.test(haystack);
   const roleSignal = roleTerms.some((term) => haystack.toLowerCase().includes(term.toLowerCase()));
   const skillSignal = skillTerms.some((term) => haystack.toLowerCase().includes(term.toLowerCase()));

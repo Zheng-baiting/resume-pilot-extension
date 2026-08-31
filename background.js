@@ -2,6 +2,8 @@ importScripts("scoring.js");
 
 const SEARCH_URL = "https://www.bing.com/search?format=rss&q=";
 const AUTO_STATE_KEY = "autopilotState";
+const JOB_WATCH_ALARM = "resume-pilot-job-watch";
+const RECRUITMENT_DISCOVERY_SITES = ["zhipin.com", "zhaopin.com", "51job.com", "liepin.com", "shixiseng.com"];
 let autopilotState = null;
 let autoStepBusy = false;
 
@@ -11,8 +13,16 @@ const VERIFIED_CAREER_SEEDS = ResumePilotScoring.companies.map((entry) => ({
   domain: entry.domains[0],
   url: entry.careerUrl,
   jobListUrls: entry.jobListUrls || {},
-  tags: entry.tags
+  tags: entry.tags,
+  segment: entry.segment || "其他企业"
 }));
+
+chrome.runtime.onInstalled?.addListener(() => ensureJobWatchAlarm());
+chrome.runtime.onStartup?.addListener(() => ensureJobWatchAlarm());
+chrome.alarms?.onAlarm?.addListener((alarm) => {
+  if (alarm.name === JOB_WATCH_ALARM) refreshJobWatch().catch(() => {});
+});
+ensureJobWatchAlarm();
 
 chrome.storage.local.get(AUTO_STATE_KEY).then((data) => {
   autopilotState = data[AUTO_STATE_KEY] || null;
@@ -37,6 +47,48 @@ chrome.storage.local.get(AUTO_STATE_KEY).then((data) => {
       .catch(() => moveToNextCompany("浏览器恢复后重新开始当前企业"));
   }
 });
+
+async function ensureJobWatchAlarm() {
+  if (!chrome.alarms?.create) return;
+  const existing = await chrome.alarms.get(JOB_WATCH_ALARM).catch(() => null);
+  if (!existing) await chrome.alarms.create(JOB_WATCH_ALARM, { delayInMinutes: 2, periodInMinutes: 30 });
+}
+
+async function refreshJobWatch() {
+  const { profile = {}, jobWatchState = {}, inactiveCompanies = {} } = await chrome.storage.local.get(["profile", "jobWatchState", "inactiveCompanies"]);
+  if (!clean(profile.targetRole) && !clean(profile.skills)) return { checked: false, reason: "profile_incomplete" };
+  const page = Math.max(0, Number(jobWatchState.page || 0)) % 50;
+  const response = await searchOfficialCareers({
+    ...profile,
+    role: profile.targetRole,
+    city: profile.targetCity,
+    industry: profile.targetIndustry,
+    page
+  });
+  const known = new Set(jobWatchState.knownUrls || []);
+  const active = (response.results || []).filter((item) => !item.hardBlocked && item.url);
+  const newlyFound = active.filter((item) => !known.has(canonicalUrl(item.url)));
+  active.forEach((item) => known.add(canonicalUrl(item.url)));
+  const previous = jobWatchState.candidates || [];
+  const merged = new Map(previous.map((item) => [canonicalUrl(item.url), item]));
+  for (const item of newlyFound) merged.set(canonicalUrl(item.url), { ...item, discoveredAt: Date.now() });
+  for (const item of newlyFound) {
+    const company = item.company || item.companyHint;
+    if (company) delete inactiveCompanies[company];
+  }
+  const candidates = [...merged.values()].sort((a, b) => Number(b.discoveredAt || 0) - Number(a.discoveredAt || 0)).slice(0, 300);
+  await chrome.storage.local.set({
+    inactiveCompanies,
+    jobWatchState: {
+      page: (page + 1) % 50,
+      knownUrls: [...known].slice(-1200),
+      candidates,
+      lastCheckedAt: Date.now(),
+      lastNewCount: newlyFound.length
+    }
+  });
+  return { checked: true, newCount: newlyFound.length };
+}
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   handleRuntimeMessage(message, sender)
@@ -132,7 +184,11 @@ async function searchOfficialCareers(criteria = {}) {
   ];
   const queries = [...new Set([...(page === 0 ? companyQueries : []), ...seedQueries, ...(page === 0 ? discoveryQueries : [])])].slice(0, 7);
 
-  const batches = await Promise.all(queries.map((query) => fetchRssResults(query).catch(() => [])));
+  const offset = page * 10;
+  const batches = await Promise.all(queries.map((query) => fetchRssResults(query, offset).catch(() => [])));
+  const liveDiscovery = await discoverLiveCareerResults({ role, city, industry, positionType }, page).catch(() => ({ results: [], companyNames: [] }));
+  const { jobWatchState = {} } = await chrome.storage.local.get("jobWatchState");
+  const watched = (jobWatchState.candidates || []).slice(page * 4, page * 4 + 4);
   const deduped = new Map();
 
   for (const seed of pageSeeds) {
@@ -140,8 +196,9 @@ async function searchOfficialCareers(criteria = {}) {
     deduped.set(canonicalUrl(direct.url), direct);
   }
 
-  for (const item of batches.flat()) {
+  for (const item of [...batches.flat(), ...liveDiscovery.results, ...watched]) {
     if (!isLikelyCareerResult(item)) continue;
+    if (isRecruitmentDiscoveryUrl(item.url)) continue;
     const key = canonicalUrl(item.url);
     const scored = enrichResult(item, { ...criteria, role, city, industry, positionType, skills, preferredCompanies, matchedSeeds });
     if (!deduped.has(key) || deduped.get(key).score < scored.score) {
@@ -149,12 +206,70 @@ async function searchOfficialCareers(criteria = {}) {
     }
   }
 
+  const ranked = [...deduped.values()].sort((a, b) => b.score - a.score);
+  const preferredNames = new Set(preferredCompanies);
+  const preferredResults = ranked.filter((item) => [...preferredNames].some((name) => item.company?.includes(name) || name.includes(item.company || "")));
+  const diversifiedResults = interleaveBySegment(ranked.filter((item) => !preferredResults.includes(item)));
+  const results = [...new Map([...preferredResults, ...diversifiedResults].map((item) => [canonicalUrl(item.url), item])).values()].slice(0, 24);
   return {
-    results: [...deduped.values()].sort((a, b) => b.score - a.score).slice(0, 24),
+    results,
     page,
-    hasMore: (page + 1) * pageSize < matchedSeeds.length,
-    totalCompanies: matchedSeeds.length
+    hasMore: (page + 1) * pageSize < matchedSeeds.length
+      || (page + 1) * 4 < (jobWatchState.candidates || []).length
+      || (page < 49 && liveDiscovery.results.length > 0),
+    totalCompanies: matchedSeeds.length + (jobWatchState.candidates || []).length + liveDiscovery.companyNames.length,
+    newlyDiscoveredCompanies: liveDiscovery.companyNames
   };
+}
+
+async function discoverLiveCareerResults(criteria, page = 0) {
+  const sites = RECRUITMENT_DISCOVERY_SITES
+    .map((_, index, all) => all[(index + page) % all.length])
+    .slice(0, 3);
+  const listingQueries = sites.map((site) =>
+    `site:${site} ${criteria.role} ${criteria.city} ${criteria.industry} ${criteria.positionType}`
+  );
+  const listingBatches = await Promise.all(listingQueries.map((query) => fetchRssResults(query, page * 10).catch(() => [])));
+  const companyNames = [...new Set(listingBatches.flat().map(extractCompanyNameFromListing).filter(Boolean))].slice(0, 6);
+  const verifiedBatches = await Promise.all(companyNames.map(async (company) => {
+    const query = `${company} 官方招聘 校园招聘 实习 careers`;
+    const results = await fetchRssResults(query).catch(() => []);
+    return results
+      .filter((item) => isOfficialCareerForCompany(item, company))
+      .slice(0, 2)
+      .map((item) => ({ ...item, companyHint: company, entryKind: "discoveredCareer" }));
+  }));
+  return { results: verifiedBatches.flat(), companyNames };
+}
+
+function extractCompanyNameFromListing(item = {}) {
+  const text = clean(`${item.title || ""} ${item.description || ""}`)
+    .replace(/BOSS直聘|智联招聘|前程无忧|猎聘|实习僧/gi, " ");
+  const legalNames = [...text.matchAll(/([\u4e00-\u9fa5A-Za-z0-9·（）()]{2,36}(?:股份有限公司|有限责任公司|有限公司|集团公司|集团|科技公司|网络公司|通信公司|软件公司))/g)]
+    .map((match) => clean(match[1]).replace(/^(?:职位|岗位|招聘|诚聘|急聘)[:：\s-]*/, ""))
+    .filter((name) => name.length >= 3 && name.length <= 36 && !/(招聘平台|人力资源|劳务派遣)/.test(name));
+  return legalNames.sort((a, b) => b.length - a.length)[0] || "";
+}
+
+function isRecruitmentDiscoveryUrl(value = "") {
+  try {
+    const host = new URL(value).hostname.replace(/^www\./, "").toLowerCase();
+    return RECRUITMENT_DISCOVERY_SITES.some((domain) => host === domain || host.endsWith(`.${domain}`));
+  } catch {
+    return false;
+  }
+}
+
+function isOfficialCareerForCompany(item = {}, company = "") {
+  if (!item.url?.startsWith("http") || isRecruitmentDiscoveryUrl(item.url)) return false;
+  const core = clean(company)
+    .replace(/^(?:北京|上海|深圳|广州|杭州|南京|苏州|成都|武汉|厦门|福州)市?/, "")
+    .replace(/(?:股份有限公司|有限责任公司|有限公司|集团公司|集团|科技公司|网络公司|通信公司|软件公司)$/g, "")
+    .trim();
+  if (core.length < 2) return false;
+  const haystack = `${item.title || ""} ${item.description || ""} ${item.url}`.toLowerCase();
+  const careerSignal = /(招聘|校招|实习|应届|职位|career|jobs?|join|talent|recruit)/i.test(haystack);
+  return careerSignal && haystack.includes(core.toLowerCase());
 }
 
 function selectSeeds(industry, preferredCompanies) {
@@ -165,7 +280,32 @@ function selectSeeds(industry, preferredCompanies) {
   const relevant = VERIFIED_CAREER_SEEDS.filter((seed) =>
     !industryTerms.length || industryTerms.some((term) => seed.tags.some((tag) => tag.includes(term) || term.includes(tag)))
   );
-  return [...new Map([...preferred, ...relevant, ...VERIFIED_CAREER_SEEDS].map((seed) => [seed.company, seed])).values()];
+  const diversified = [...interleaveBySegment(relevant), ...interleaveBySegment(VERIFIED_CAREER_SEEDS)];
+  return [...new Map([...preferred, ...diversified].map((seed) => [seed.company, seed])).values()];
+}
+
+function interleaveBySegment(items) {
+  const order = ["新发现企业", "成长型企业", "外企", "行业企业", "大型民企", "大型企业", "金融企业", "其他企业", "待分类"];
+  const groups = new Map();
+  for (const item of items) {
+    const key = item.segment || item.companySegment || "其他企业";
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(item);
+  }
+  const keys = [...new Set([...order, ...groups.keys()])].filter((key) => groups.get(key)?.length);
+  const output = [];
+  for (let index = 0; output.length < items.length; index += 1) {
+    let added = false;
+    for (const key of keys) {
+      const item = groups.get(key)?.[index];
+      if (item) {
+        output.push(item);
+        added = true;
+      }
+    }
+    if (!added) break;
+  }
+  return output;
 }
 
 function makeSeedResult(seed, criteria) {
@@ -174,14 +314,15 @@ function makeSeedResult(seed, criteria) {
   return enrichResult({
     title: `${seed.company}官方${useIntern ? "实习生" : "校园"}岗位`,
     url,
-    description: `${seed.company}官方招聘岗位列表。方向：${seed.tags.join("、")}。进入后扩展会继续扫描并筛选具体岗位。`,
+    description: `${seed.company}官方招聘岗位列表。类型：${seed.segment || "其他企业"}；方向：${seed.tags.join("、")}。进入后扩展会继续扫描并筛选具体岗位。`,
     query: "内置官方招聘入口",
     entryKind: "jobList"
   }, criteria);
 }
 
-async function fetchRssResults(query) {
-  const response = await fetch(SEARCH_URL + encodeURIComponent(query));
+async function fetchRssResults(query, offset = 0) {
+  const first = Math.max(1, Number(offset || 0) + 1);
+  const response = await fetch(`${SEARCH_URL}${encodeURIComponent(query)}&first=${first}`);
   if (!response.ok) throw new Error(`搜索服务返回 ${response.status}`);
   const xml = await response.text();
   const items = [...xml.matchAll(/<item>([\s\S]*?)<\/item>/gi)];
@@ -284,6 +425,7 @@ function isLikelyCareerResult(item) {
 function enrichResult(item, criteria) {
   const text = `${item.title} ${item.description} ${item.url}`.toLowerCase();
   const seed = criteria.matchedSeeds.find((candidate) => item.url.includes(candidate.domain));
+  const knownProfile = ResumePilotScoring.findCompany(text, item.url);
   const companyEval = ResumePilotScoring.evaluateCompany(text, item.url, criteria);
   const jobEval = ResumePilotScoring.evaluateJob(text, item.url, {
     ...criteria,
@@ -295,7 +437,8 @@ function enrichResult(item, criteria) {
   const score = Math.round(companyEval.companyScore * 0.3 + jobEval.jobScore * 0.45 + jobEval.compensationScore * 0.25);
   return {
     ...item,
-    company: companyEval.company || seed?.company || inferCompany(item),
+    company: seed?.company || item.companyHint || companyEval.company || inferCompany(item),
+    companySegment: seed?.segment || knownProfile?.segment || (item.companyHint ? "新发现企业" : "待分类"),
     resultType: item.entryKind === "jobList" ? "岗位列表" : (isPosition ? "具体岗位" : "招聘入口"),
     score,
     companyScore: companyEval.companyScore,
@@ -321,7 +464,15 @@ function inferCompany(item) {
 
 async function startAutopilot(profile) {
   if (!profile.autoSubmitEnabled) throw new Error("请先勾选自动提交授权");
-  const companies = selectSeeds(profile.targetIndustry || "", splitList(profile.preferredCompanies));
+  const { inactiveCompanies = {}, jobWatchState = {} } = await chrome.storage.local.get(["inactiveCompanies", "jobWatchState"]);
+  const watchedCompanies = (jobWatchState.candidates || [])
+    .filter((item) => !item.hardBlocked && item.url && item.resultType !== "具体岗位")
+    .map((item) => watchedResultToSeed(item, profile))
+    .filter(Boolean);
+  const baseCompanies = selectSeeds(profile.targetIndustry || "", splitList(profile.preferredCompanies));
+  const companies = [...new Map([...watchedCompanies, ...baseCompanies]
+    .filter((company) => Number(inactiveCompanies[company.company]?.retryAfter || 0) <= Date.now())
+    .map((company) => [company.company, company])).values()];
   if (!companies.length) throw new Error("没有可用的企业入口");
   const rolePlan = inferRolePlan(profile);
   autopilotState = {
@@ -356,6 +507,24 @@ async function startAutopilot(profile) {
   await persistAutopilot();
   await moveToNextCompany();
   return { state: autopilotState };
+}
+
+function watchedResultToSeed(item, profile = {}) {
+  if (isRecruitmentDiscoveryUrl(item.url)) return null;
+  try {
+    const domain = new URL(item.url).hostname.replace(/^www\./, "");
+    return {
+      company: item.company || item.companyHint || inferCompany(item),
+      domain,
+      url: item.url,
+      jobListUrls: { campus: item.url, intern: item.url },
+      tags: [...new Set([...splitList(profile.targetIndustry), ...splitList(profile.skills).slice(0, 5)])],
+      segment: item.companySegment || "新发现企业",
+      discovered: true
+    };
+  } catch {
+    return null;
+  }
 }
 
 async function stopAutopilot() {
@@ -558,7 +727,19 @@ async function autoScanStage(tabId) {
 
   autopilotState.skipped += 1;
   await addHistory("no_matching_job", `已逐个搜索 ${(autopilotState.rolePlan || []).map((item) => item.role).join("、")}，未找到达标岗位`);
+  await markCompanyTemporarilyInactive(autopilotState.currentCompany?.company, "当前官网没有活跃的匹配岗位");
   await moveToNextCompany("全部候选方向均无匹配岗位");
+}
+
+async function markCompanyTemporarilyInactive(company, reason = "") {
+  if (!company) return;
+  const { inactiveCompanies = {} } = await chrome.storage.local.get("inactiveCompanies");
+  inactiveCompanies[company] = {
+    checkedAt: Date.now(),
+    retryAfter: Date.now() + 24 * 60 * 60 * 1000,
+    reason
+  };
+  await chrome.storage.local.set({ inactiveCompanies });
 }
 
 async function openAutoCandidate(tabId, candidate, message = "") {

@@ -1,5 +1,5 @@
 (function initResumePilotScoring(global) {
-  const companies = [
+  const coreCompanies = [
     {
       company: "腾讯",
       aliases: ["Tencent"],
@@ -144,6 +144,50 @@
     }
   ];
 
+  // 扩展发现库只提供企业官网入口和行业标签，不代表背书。大型企业、外企、
+  // 行业公司与成长型公司使用同一套岗位匹配规则，避免结果被互联网大厂垄断。
+  const discoveryCompanies = [
+    { company: "中兴通讯", aliases: ["ZTE"], domains: ["job.zte.com.cn"], careerUrl: "https://job.zte.com.cn/cn/", jobListUrls: { campus: "https://job.zte.com.cn/cn/", intern: "https://job.zte.com.cn/cn/campus-recruitment/Recruitment_positions/intern.html" }, tags: ["通信", "网络", "人工智能", "软件", "硬件"], segment: "行业企业" },
+    { company: "新华三", aliases: ["H3C", "紫光华山"], domains: ["career.h3c.com"], careerUrl: "https://career.h3c.com/", tags: ["计算机网络", "通信", "网络安全", "云计算", "人工智能"], segment: "行业企业" },
+    { company: "锐捷网络", aliases: ["Ruijie"], domains: ["ruijie.com.cn"], careerUrl: "https://app.mokahr.com/campus-recruitment/ruijie/136206", tags: ["计算机网络", "通信", "网络安全", "云计算", "软件"], segment: "行业企业" },
+    { company: "TP-LINK", aliases: ["普联技术"], domains: ["hr.tp-link.com.cn"], careerUrl: "https://hr.tp-link.com.cn/", tags: ["计算机网络", "通信", "硬件", "软件", "物联网"], segment: "行业企业" },
+    { company: "深信服", aliases: ["Sangfor"], domains: ["hr.sangfor.com"], careerUrl: "https://hr.sangfor.com/schoolRecruitment", tags: ["网络安全", "云计算", "人工智能", "软件", "技术服务"], segment: "行业企业" },
+    { company: "爱立信", aliases: ["Ericsson"], domains: ["jobs.ericsson.com", "ericsson.com"], careerUrl: "https://jobs.ericsson.com/careers?domain=ericsson.com&location=China", tags: ["外企", "通信", "5G", "网络", "软件", "人工智能"], segment: "外企" },
+    { company: "诺基亚", aliases: ["Nokia", "诺基亚贝尔"], domains: ["nokia.com"], careerUrl: "https://www.nokia.com/careers/", tags: ["外企", "通信", "网络", "人工智能", "软件"], segment: "外企" },
+    { company: "思科", aliases: ["Cisco"], domains: ["careers.cisco.com"], careerUrl: "https://careers.cisco.com/global/en/search-results", tags: ["外企", "计算机网络", "网络安全", "云计算", "人工智能"], segment: "外企" },
+    { company: "西门子", aliases: ["Siemens"], domains: ["jobs.siemens.com.cn", "siemens.com"], careerUrl: "https://jobs.siemens.com.cn/siemens/position/index", tags: ["外企", "工业互联网", "自动化", "人工智能", "通信", "软件"], segment: "外企" },
+    { company: "博世", aliases: ["Bosch"], domains: ["bosch.com.cn"], careerUrl: "https://www.bosch.com.cn/careers/job-offers/internship/", tags: ["外企", "汽车", "物联网", "人工智能", "软件", "工业"], segment: "外企" },
+    { company: "SAP", aliases: ["思爱普"], domains: ["jobs.sap.com", "sap.com"], careerUrl: "https://jobs.sap.com/go/China/8807101/", tags: ["外企", "企业软件", "云计算", "人工智能", "数据"], segment: "外企" },
+    { company: "IBM", aliases: ["国际商业机器"], domains: ["ibm.com"], careerUrl: "https://www.ibm.com/careers/search", tags: ["外企", "企业软件", "云计算", "人工智能", "咨询"], segment: "外企" },
+    { company: "英特尔", aliases: ["Intel"], domains: ["chinacampus.jobs.intel.cn", "jobs.intel.com", "intel.cn"], careerUrl: "https://chinacampus.jobs.intel.cn/intel/position/index", tags: ["外企", "芯片", "人工智能", "软件", "硬件"], segment: "外企" },
+    { company: "高通", aliases: ["Qualcomm"], domains: ["qualcomm.com", "careers.qualcomm.com"], careerUrl: "https://www.qualcomm.com/company/careers/internships-and-early-in-career-opportunities", tags: ["外企", "通信", "芯片", "人工智能", "软件"], segment: "外企" },
+    { company: "施耐德电气", aliases: ["Schneider Electric"], domains: ["schneider-electric.cn", "careers.se.com"], careerUrl: "https://www.schneider-electric.cn/zh/about-us/careers/local/early-careers/", tags: ["外企", "自动化", "能源", "工业互联网", "软件"], segment: "外企" },
+    { company: "霍尼韦尔", aliases: ["Honeywell"], domains: ["careers.honeywell.com", "honeywell.com.cn"], careerUrl: "https://careers.honeywell.com/en/sites/Honeywell/jobs", tags: ["外企", "自动化", "工业", "人工智能", "软件"], segment: "外企" },
+    { company: "Zilliz", aliases: ["上海栖厘科技"], domains: ["zilliz.com.cn"], careerUrl: "https://zilliz.com.cn/careers", tags: ["成长型企业", "人工智能", "数据库", "云计算", "软件"], segment: "成长型企业" },
+    { company: "第四范式", aliases: ["4Paradigm"], domains: ["4paradigm.com"], careerUrl: "https://www.4paradigm.com/about/recruit.html", tags: ["成长型企业", "人工智能", "企业软件", "数据", "云计算"], segment: "成长型企业" },
+    { company: "Momenta", aliases: ["初速度科技"], domains: ["momenta.cn"], careerUrl: "https://www.momenta.cn/join.html", tags: ["成长型企业", "自动驾驶", "人工智能", "算法", "软件"], segment: "成长型企业" }
+  ];
+
+  const segmentDimensions = {
+    外企: { stability: 78, growth: 76, student: 78, transparency: 82 },
+    行业企业: { stability: 76, growth: 80, student: 80, transparency: 76 },
+    成长型企业: { stability: 62, growth: 86, student: 72, transparency: 65 }
+  };
+  const segmentByCompany = {
+    腾讯: "大型民企", 字节跳动: "大型民企", 华为: "大型民企", 阿里巴巴: "大型民企",
+    百度: "大型民企", 京东: "大型民企", 美团: "大型民企", 小米: "大型民企",
+    网易: "大型民企", 大疆: "大型民企", OPPO: "大型民企", 联想: "大型企业", 招商银行: "金融企业"
+  };
+  const companies = [
+    ...coreCompanies.map((entry) => ({ ...entry, segment: segmentByCompany[entry.company] || "大型企业" })),
+    ...discoveryCompanies.map((entry) => ({
+      ...entry,
+      jobListUrls: entry.jobListUrls || { campus: entry.careerUrl, intern: entry.careerUrl },
+      dimensions: segmentDimensions[entry.segment] || { stability: 70, growth: 75, student: 75, transparency: 70 },
+      evidence: [{ label: "官方招聘入口", url: entry.careerUrl }]
+    }))
+  ];
+
   const focusWeights = {
     balanced: { stability: 0.3, growth: 0.25, student: 0.3, transparency: 0.15 },
     stability: { stability: 0.5, growth: 0.15, student: 0.2, transparency: 0.15 },
@@ -222,6 +266,13 @@
     const warnings = [];
     let score = 0;
     let hardBlocked = false;
+
+    const explicitlyClosed = /(招聘已结束|职位已下线|岗位已下线|停止招聘|停止申请|不再接受申请|申请通道已关闭|已招满|position (?:is )?closed|job (?:is )?closed|expired|no longer accepting applications)/i.test(haystack);
+    if (explicitlyClosed || isPastApplicationDeadline(haystack)) {
+      score -= 100;
+      hardBlocked = true;
+      warnings.push(explicitlyClosed ? "岗位已停止招聘或下线" : "岗位申请截止日期已过");
+    }
 
     const matchedRoles = roleTerms.filter((term) => haystack.includes(term.toLowerCase()));
     if (roleTerms.length) {
@@ -360,8 +411,10 @@
       /(?:日薪|每天)\s*(\d{2,4})\s*(?:-|~|—|–|至)\s*(\d{2,4})\s*元/i
     ]);
     const warnings = [];
-    let score = 25 + Math.min(20, benefitCount * 4);
-    let label = benefitCount ? `薪资未公开 · ${benefitCount} 类福利信号` : "待遇未公开";
+    // 招聘官网不公开薪资很常见，薪资可能在面试或 offer 阶段协商。未知薪资采用
+    // 中性分；只有公开区间明确低于底线才扣分，明确达到底线才加分。
+    let score = 50 + Math.min(16, benefitCount * 4);
+    let label = benefitCount ? `薪资面议/未公开 · ${benefitCount} 类福利信号` : "薪资面议/官网未公开";
 
     if (daily) {
       const minimum = Number(profile.minDailySalary || 0);
@@ -378,8 +431,6 @@
       label = `${formatNumber(range.min)}–${formatNumber(range.max)}k/月`;
       if (minimum && range.max < minimum) warnings.push(`月薪上限低于期望的 ${minimum}k`);
       else if (minimum) warnings.push("薪资达到期望仅依据页面公开区间，需确认薪资构成");
-    } else {
-      warnings.push("岗位未公开薪资，待遇分保持保守");
     }
 
     return { score: clamp(Math.round(score)), label, warnings };
@@ -429,6 +480,13 @@
       if (Number.isFinite(first) && Number.isFinite(second)) return { min: Math.min(first, second), max: Math.max(first, second) };
     }
     return null;
+  }
+
+  function isPastApplicationDeadline(text) {
+    const match = text.match(/(?:申请截止|投递截止|截止日期|报名截止|deadline)\s*[:：]?\s*(20\d{2})[年\-/.](\d{1,2})[月\-/.](\d{1,2})/i);
+    if (!match) return false;
+    const deadline = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 23, 59, 59).getTime();
+    return Number.isFinite(deadline) && deadline < Date.now();
   }
 
   function formatNumber(value) { return Number.isInteger(value) ? String(value) : value.toFixed(1); }

@@ -306,8 +306,11 @@ async function searchCompanies(reset = true) {
     renderResults(filterResults(response.results, profile));
     searchHasMore = Boolean(response.hasMore);
     status.className = "status success";
+    const discovered = response.newlyDiscoveredCompanies?.length
+      ? ` 本轮从公开招聘信息发现 ${response.newlyDiscoveredCompanies.length} 家新企业并已回查官网。`
+      : "";
     status.textContent = response.results.length
-      ? `已显示 ${renderedUrls.size} 个企业/岗位候选；${searchHasMore ? "向下滑动继续加载。" : "已加载全部内置企业。"}`
+      ? `已显示 ${renderedUrls.size} 个企业/岗位候选；${searchHasMore ? "向下滑动继续加载。" : "已加载当前活跃候选。"}${discovered}`
       : "没有找到合适结果，请换一组条件。";
     document.getElementById("loadMore").hidden = !searchHasMore;
     if (searchHasMore && document.body.scrollHeight <= window.innerHeight + 80) setTimeout(loadMoreCompanies, 250);
@@ -378,7 +381,7 @@ function renderResults(items) {
     description.textContent = item.description;
     const meta = document.createElement("div");
     meta.className = "result-meta";
-    meta.textContent = `${item.company || "待核验企业"} · ${safeHost(item.url)}`;
+    meta.textContent = `${item.company || "待核验企业"} · ${item.companySegment || "待分类"} · ${safeHost(item.url)}`;
     const reasons = document.createElement("div");
     reasons.className = "result-reasons";
     const pay = document.createElement("div");
