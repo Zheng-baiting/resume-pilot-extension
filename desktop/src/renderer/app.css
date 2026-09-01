@@ -1,0 +1,56 @@
+:root {
+  color-scheme: light;
+  font-family: Inter, "Microsoft YaHei", system-ui, sans-serif;
+  color: #172033;
+  background: #f3f6fb;
+  --primary: #2563eb;
+  --line: #dfe6f1;
+  --muted: #66738a;
+}
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 940px; background: radial-gradient(circle at top right, #dfeaff 0, transparent 32%), #f3f6fb; }
+button, input, select, textarea { font: inherit; }
+button { border: 1px solid var(--line); border-radius: 10px; padding: 9px 15px; color: #23304a; background: #fff; cursor: pointer; }
+button:hover { border-color: #9db7ed; }
+button.primary { color: #fff; border-color: var(--primary); background: var(--primary); }
+.topbar { display: flex; justify-content: space-between; gap: 24px; padding: 30px 44px 25px; color: #fff; background: linear-gradient(120deg, #0f1b35, #142a55 62%, #1d4ed8); }
+.eyebrow { color: #8fb7ff; font-size: 12px; font-weight: 800; letter-spacing: .18em; }
+h1 { margin: 7px 0 5px; font-size: 30px; }
+.topbar p { margin: 0; color: #c6d4ef; }
+.bridge { align-self: flex-start; margin-top: 9px; padding: 9px 13px; border: 1px solid #5c76a5; border-radius: 999px; color: #d7e4fb; font-size: 13px; }
+.bridge span { display: inline-block; width: 8px; height: 8px; margin-right: 7px; border-radius: 50%; background: #34d399; }
+main { padding: 24px 44px 50px; }
+.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 18px; }
+.stats article, .card { border: 1px solid var(--line); border-radius: 16px; background: rgba(255,255,255,.95); box-shadow: 0 10px 30px rgba(21,42,82,.06); }
+.stats article { padding: 17px 20px; }
+.stats span { display: block; color: var(--muted); font-size: 13px; }
+.stats strong { display: block; margin-top: 5px; font-size: 27px; }
+.layout { display: grid; grid-template-columns: 1.3fr .7fr; gap: 18px; }
+.card { padding: 21px; }
+.section-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 17px; }
+.section-heading > div:first-child { display: flex; align-items: center; gap: 10px; }
+.section-heading span { color: var(--primary); font-size: 12px; font-weight: 800; }
+h2 { margin: 0; font-size: 18px; }
+.field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 13px; }
+label { display: grid; gap: 6px; color: #46536a; font-size: 12px; font-weight: 700; }
+label.wide { grid-column: 1 / -1; }
+input, select, textarea { width: 100%; border: 1px solid #d5deec; border-radius: 10px; outline: none; color: #172033; background: #fbfcff; }
+input, select { height: 40px; padding: 0 11px; }
+textarea { min-height: 166px; padding: 11px; resize: vertical; font: 12px/1.55 ui-monospace, SFMono-Regular, Consolas, monospace; }
+input:focus, select:focus, textarea:focus { border-color: #6f9cff; box-shadow: 0 0 0 3px #e8efff; }
+.queue-options { display: grid; grid-template-columns: repeat(3, 1fr) auto; align-items: end; gap: 11px; margin-top: 15px; padding-top: 15px; border-top: 1px solid #edf0f6; }
+.muted { margin: -6px 0 13px; color: var(--muted); font-size: 12px; line-height: 1.55; }
+.actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 11px; }
+.queue-card { margin-top: 18px; }
+.notice { margin-bottom: 13px; padding: 11px 13px; border-radius: 10px; color: #315386; background: #edf4ff; font-size: 13px; }
+.notice.error { color: #9f2d2d; background: #fff0f0; }
+.table-wrap { overflow: auto; max-height: 410px; border: 1px solid var(--line); border-radius: 12px; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { padding: 12px 14px; border-bottom: 1px solid #edf0f5; text-align: left; vertical-align: top; }
+th { position: sticky; top: 0; color: #647087; background: #f7f9fc; font-size: 11px; letter-spacing: .04em; }
+td strong { display: block; margin-bottom: 3px; }
+td small { color: var(--muted); }
+.score { color: #1760d3; font-weight: 800; }
+.status { display: inline-block; padding: 4px 8px; border-radius: 999px; color: #315386; background: #edf4ff; font-size: 11px; }
+.status.blocked { color: #a33d32; background: #fff0ec; }
+@media (max-width: 1050px) { .layout { grid-template-columns: 1fr; } }

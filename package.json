@@ -1,0 +1,17 @@
+{
+  "name": "resume-pilot",
+  "version": "2.0.0-alpha.1",
+  "private": true,
+  "description": "Resume Pilot hybrid desktop and browser automation workspace",
+  "workspaces": [
+    "desktop"
+  ],
+  "scripts": {
+    "desktop:dev": "npm --workspace desktop run dev",
+    "test:desktop": "node --test desktop/tests/*.test.js",
+    "test": "npm run test:desktop"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

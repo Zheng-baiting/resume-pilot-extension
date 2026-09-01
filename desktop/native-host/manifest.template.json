@@ -1,0 +1,9 @@
+{
+  "name": "com.resume_pilot.desktop",
+  "description": "Resume Pilot desktop control center bridge",
+  "path": "__PACKAGED_NATIVE_HOST_PATH__",
+  "type": "stdio",
+  "allowed_origins": [
+    "chrome-extension://__EXTENSION_ID__/"
+  ]
+}

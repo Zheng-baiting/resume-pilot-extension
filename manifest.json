@@ -1,9 +1,10 @@
 {
   "manifest_version": 3,
   "name": "简历领航 Resume Pilot",
-  "version": "1.0.1",
-  "description": "从简历生成岗位方向，在企业官网核验真实岗位、地点和流程后辅助填写并按授权投递。",
+  "version": "2.0.0",
+  "description": "混合桌面控制中心与浏览器执行器，在企业官网核验真实岗位、地点和流程后按授权辅助投递。",
   "permissions": ["storage", "tabs", "activeTab", "alarms"],
+  "optional_permissions": ["nativeMessaging"],
   "host_permissions": ["https://www.bing.com/*"],
   "background": {
     "service_worker": "background.js"

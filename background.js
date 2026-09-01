@@ -1,4 +1,4 @@
-importScripts("city-preferences.js", "scoring.js");
+importScripts("shared/bridge-protocol.js", "city-preferences.js", "scoring.js");
 
 const SEARCH_URL = "https://www.bing.com/search?format=rss&q=";
 const AUTO_STATE_KEY = "autopilotState";
@@ -10,6 +10,94 @@ const RECRUITMENT_DISCOVERY_SITES = [
 ];
 let autopilotState = null;
 let autoStepBusy = false;
+let desktopPort = null;
+let desktopBridgeStatus = { status: "disconnected", lastError: "", connectedAt: 0 };
+const desktopPending = new Map();
+
+function disconnectDesktopBridge(error = "") {
+  desktopPort = null;
+  desktopBridgeStatus = { status: "disconnected", lastError: clean(error), connectedAt: 0 };
+  for (const pending of desktopPending.values()) {
+    clearTimeout(pending.timer);
+    pending.reject(new Error(error || "桌面控制中心连接已断开"));
+  }
+  desktopPending.clear();
+}
+
+function connectDesktopBridge() {
+  if (desktopPort) return desktopPort;
+  desktopBridgeStatus = { status: "connecting", lastError: "", connectedAt: 0 };
+  try {
+    const port = chrome.runtime.connectNative(ResumePilotBridge.HOST_NAME);
+    desktopPort = port;
+    port.onMessage.addListener((message) => {
+      const pending = desktopPending.get(message?.requestId);
+      if (!pending) return;
+      desktopPending.delete(message.requestId);
+      clearTimeout(pending.timer);
+      if (message.ok) pending.resolve(message.payload);
+      else pending.reject(new Error(message.error || "桌面控制中心返回错误"));
+    });
+    port.onDisconnect.addListener(() => {
+      const reason = chrome.runtime.lastError?.message || "桌面控制中心未运行或本地通信组件未安装";
+      disconnectDesktopBridge(reason);
+    });
+    return port;
+  } catch (error) {
+    disconnectDesktopBridge(error.message);
+    throw error;
+  }
+}
+
+function sendDesktopBridge(type, payload = {}) {
+  const request = ResumePilotBridge.makeRequest(type, payload);
+  const port = connectDesktopBridge();
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      desktopPending.delete(request.requestId);
+      reject(new Error("桌面控制中心响应超时"));
+    }, 5000);
+    desktopPending.set(request.requestId, { resolve, reject, timer });
+    port.postMessage(request);
+  });
+}
+
+async function syncBrowserStateToDesktop() {
+  const data = await chrome.storage.local.get(["profile", "latestManualScan", "latestCompanyCandidates", "jobWatchState"]);
+  const safeProfileFields = [
+    "targetRole", "targetCity", "targetIndustry", "positionType", "skills", "minJobFit",
+    "minDailySalary", "minMonthlySalary", "avoidJobKeywords", "avoidCompanyKeywords",
+    "maxExperienceYears", "availableDays", "internshipMonths"
+  ];
+  const safeProfile = Object.fromEntries(safeProfileFields
+    .filter((key) => data.profile?.[key] !== undefined && data.profile?.[key] !== "")
+    .map((key) => [key, data.profile[key]]));
+  await sendDesktopBridge(ResumePilotBridge.TYPES.SYNC_PROFILE, { profile: safeProfile });
+  const candidates = [
+    ...(data.latestManualScan?.results || []),
+    ...(data.latestCompanyCandidates?.results || []),
+    ...(data.jobWatchState?.candidates || [])
+  ];
+  const jobs = [...new Map(candidates.filter((item) => item?.url).map((item) => [`${canonicalUrl(item.url)}|${clean(item.title)}`, {
+    id: item.id || "",
+    company: item.company || item.companyHint || "",
+    title: item.title || item.job || "",
+    url: item.url,
+    location: item.location || item.jobLocation || (item.matchedCities || []).join("、"),
+    description: item.description || item.summary || "",
+    skills: item.skills || "",
+    positionType: item.positionType || "",
+    salary: item.salary || item.compensationLabel || "",
+    source: item.source || item.query || "browser-extension",
+    verificationStatus: item.verificationStatus || item.resultType || "candidate",
+    active: item.active !== false,
+    publishedAt: item.publishedAt || "",
+    expiresAt: item.expiresAt || ""
+  }])).values()];
+  const imported = await sendDesktopBridge(ResumePilotBridge.TYPES.IMPORT_JOBS, { jobs });
+  desktopBridgeStatus = { status: "connected", lastError: "", connectedAt: desktopBridgeStatus.connectedAt || Date.now() };
+  return { imported, jobs: jobs.length, status: desktopBridgeStatus };
+}
 
 // 这些入口来自企业公开招聘官网；它们只作为搜索种子，不代表对企业的背书或排名。
 const VERIFIED_CAREER_SEEDS = ResumePilotScoring.companies.map((entry) => ({
@@ -150,6 +238,15 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 });
 
 async function handleRuntimeMessage(message, sender) {
+  if (message?.type === "DESKTOP_STATUS") return { status: desktopBridgeStatus };
+  if (message?.type === "DESKTOP_CONNECT") {
+    const snapshot = await sendDesktopBridge(ResumePilotBridge.TYPES.HELLO, { client: "browser-extension", version: chrome.runtime.getManifest().version });
+    desktopBridgeStatus = { status: "connected", lastError: "", connectedAt: Date.now() };
+    return { status: desktopBridgeStatus, snapshot };
+  }
+  if (message?.type === "DESKTOP_SYNC") return syncBrowserStateToDesktop();
+  if (message?.type === "DESKTOP_NEXT_JOB") return sendDesktopBridge(ResumePilotBridge.TYPES.NEXT_JOB, {});
+  if (message?.type === "DESKTOP_REPORT_RESULT") return sendDesktopBridge(ResumePilotBridge.TYPES.REPORT_RESULT, message.result || {});
   if (message?.type === "SEARCH_OFFICIAL_CAREERS") return searchOfficialCareers(message.criteria);
   if (message?.type === "START_AUTOPILOT") return startAutopilot(message.profile || {});
   if (message?.type === "STOP_AUTOPILOT") return stopAutopilot();

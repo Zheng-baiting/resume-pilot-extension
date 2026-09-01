@@ -1,0 +1,14 @@
+{
+  "name": "@resume-pilot/desktop",
+  "version": "2.0.0-alpha.1",
+  "private": true,
+  "description": "Resume Pilot desktop control center",
+  "main": "src/main.js",
+  "scripts": {
+    "dev": "electron .",
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "electron": "44.1.0"
+  }
+}

@@ -1,5 +1,7 @@
 # 简历领航 Resume Pilot
 
+> `main` 当前稳定发行版为 v1.0.1。`feature/desktop-control-center` 分支正在开发 v2 混合架构：Electron 桌面控制中心负责岗位库、排序、队列和限速，浏览器扩展负责官网执行。开发说明见 [desktop/README.md](desktop/README.md) 和 [V2_ARCHITECTURE.md](V2_ARCHITECTURE.md)。
+
 一个无需后端即可运行的 Chrome / Edge 扩展。它先从简历推断多个合适的岗位方向，再逐个调用企业官网搜索与筛选，只有读取到真实岗位、地点和招聘状态后才进入核验或投递队列。当前稳定交付版为 v1.0.1。
 
 项目面向校招、实习和初级岗位求职场景。招聘平台只作为企业与岗位线索来源，扩展会回到企业官方招聘页面核验岗位、填写申请，并在最终提交前遵循用户授权设置。

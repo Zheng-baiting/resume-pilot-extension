@@ -22,6 +22,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   await restoreResumeFile();
   await restoreLatestScan();
   await refreshAutopilotStatus();
+  await refreshDesktopStatus();
   window.addEventListener("scroll", () => {
     if (searchHasMore && !searchLoading && window.innerHeight + window.scrollY >= document.body.scrollHeight - 90) {
       loadMoreCompanies();
@@ -53,6 +54,53 @@ function bindActions() {
   document.getElementById("startAutopilot").addEventListener("click", startAutopilot);
   document.getElementById("resumeAutopilot").addEventListener("click", resumeAutopilot);
   document.getElementById("stopAutopilot").addEventListener("click", stopAutopilot);
+  document.getElementById("connectDesktop").addEventListener("click", connectDesktop);
+  document.getElementById("syncDesktop").addEventListener("click", syncDesktop);
+}
+
+async function refreshDesktopStatus() {
+  const response = await chrome.runtime.sendMessage({ type: "DESKTOP_STATUS" }).catch(() => null);
+  renderDesktopStatus(response?.status);
+}
+
+function renderDesktopStatus(status = {}) {
+  const node = document.getElementById("desktopStatus");
+  if (status.status === "connected") {
+    node.className = "status success";
+    node.textContent = "桌面控制中心已连接";
+  } else {
+    node.className = status.lastError ? "status error" : "status";
+    node.textContent = status.lastError || "尚未连接；插件仍可独立使用";
+  }
+}
+
+async function connectDesktop() {
+  const node = document.getElementById("desktopStatus");
+  try {
+    const granted = await chrome.permissions.request({ permissions: ["nativeMessaging"] });
+    if (!granted) throw new Error("未授权与本地桌面程序通信");
+    node.className = "status";
+    node.textContent = "正在连接桌面控制中心…";
+    const response = await chrome.runtime.sendMessage({ type: "DESKTOP_CONNECT" });
+    if (!response?.ok) throw new Error(response?.error || "连接失败");
+    renderDesktopStatus(response.status);
+  } catch (error) {
+    renderDesktopStatus({ status: "disconnected", lastError: `${error.message}。请先安装并启动桌面控制中心。` });
+  }
+}
+
+async function syncDesktop() {
+  const node = document.getElementById("desktopStatus");
+  try {
+    node.className = "status";
+    node.textContent = "正在同步不含个人身份信息的岗位线索…";
+    const response = await chrome.runtime.sendMessage({ type: "DESKTOP_SYNC" });
+    if (!response?.ok) throw new Error(response?.error || "同步失败");
+    node.className = "status success";
+    node.textContent = `已向桌面端同步 ${response.jobs || 0} 条岗位线索`;
+  } catch (error) {
+    renderDesktopStatus({ status: "disconnected", lastError: error.message });
+  }
 }
 
 async function exportDiagnostics() {

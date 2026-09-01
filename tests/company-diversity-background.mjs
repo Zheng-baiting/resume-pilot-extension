@@ -9,10 +9,11 @@ const fetchedUrls = [];
 const context = {
   chrome: {
     runtime: {
-      getManifest: () => ({ version: "1.0.1" }),
+      getManifest: () => ({ version: "2.0.0" }),
       onMessage: { addListener() {} },
       onInstalled: { addListener() {} },
-      onStartup: { addListener() {} }
+      onStartup: { addListener() {} },
+      connectNative() { throw new Error("native host not installed in unit test"); }
     },
     alarms: {
       onAlarm: { addListener() {} },
