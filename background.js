@@ -3,6 +3,7 @@ importScripts("city-preferences.js", "scoring.js");
 const SEARCH_URL = "https://www.bing.com/search?format=rss&q=";
 const AUTO_STATE_KEY = "autopilotState";
 const JOB_WATCH_ALARM = "resume-pilot-job-watch";
+const COMPANY_VERIFICATION_KEY = "companyVerification";
 const RECRUITMENT_DISCOVERY_SITES = [
   "zhipin.com", "zhaopin.com", "51job.com", "liepin.com", "shixiseng.com",
   "lagou.com", "nowcoder.com", "yingjiesheng.com"
@@ -159,7 +160,7 @@ async function handleRuntimeMessage(message, sender) {
     return { state: autopilotState };
   }
   if (message?.type === "OPEN_MANUAL_JOB") return openManualJob(message.tabId || sender.tab?.id, message.item || {});
-  if (message?.type === "NAVIGATE_AND_SCAN") return navigateAndScan(message.tabId || sender.tab?.id, message.url, message.profile || {});
+  if (message?.type === "NAVIGATE_AND_SCAN") return navigateAndScan(message.tabId || sender.tab?.id, message.url, message.profile || {}, message.company || "");
   throw new Error("不支持的扩展操作");
 }
 
@@ -196,7 +197,7 @@ async function searchOfficialCareers(criteria = {}) {
   const offset = page * 10;
   const batches = await Promise.all(queries.map((query) => fetchRssResults(query, offset).catch(() => [])));
   const liveDiscovery = await discoverLiveCareerResults({ role: roleForQuery(2), city: cityForQuery(2), industry, positionType }, page).catch(() => ({ results: [], companyNames: [] }));
-  const { jobWatchState = {} } = await chrome.storage.local.get("jobWatchState");
+  const { jobWatchState = {}, companyVerification = {} } = await chrome.storage.local.get(["jobWatchState", COMPANY_VERIFICATION_KEY]);
   const watched = (jobWatchState.candidates || []).slice(page * 8, page * 8 + 8);
   const deduped = new Map();
 
@@ -223,7 +224,16 @@ async function searchOfficialCareers(criteria = {}) {
   const preferredNames = new Set(preferredCompanies);
   const preferredResults = ranked.filter((item) => [...preferredNames].some((name) => item.company?.includes(name) || name.includes(item.company || "")));
   const diversifiedResults = interleaveBySegment(ranked.filter((item) => !preferredResults.includes(item)));
-  const results = [...new Map([...preferredResults, ...diversifiedResults].map((item) => [canonicalUrl(item.url), item])).values()].slice(0, 36);
+  const results = [...new Map([...preferredResults, ...diversifiedResults].map((item) => [canonicalUrl(item.url), item])).values()]
+    .slice(0, 36)
+    .map((item) => applyCompanyVerification(item, companyVerification));
+  await chrome.storage.local.set({
+    latestCompanyCandidates: {
+      results,
+      createdAt: Date.now(),
+      criteria: { role, city, industry, positionType }
+    }
+  });
   return {
     results,
     page,
@@ -325,11 +335,11 @@ function makeSeedResult(seed, criteria) {
   const useIntern = /实习|intern/i.test(criteria.positionType);
   const url = useIntern ? (seed.jobListUrls.intern || seed.url) : (seed.jobListUrls.campus || seed.url);
   return enrichResult({
-    title: `${seed.company}官方${useIntern ? "实习生" : "校园"}岗位`,
+    title: `${seed.company}官方招聘入口`,
     url,
-    description: `${seed.company}官方招聘岗位列表。类型：${seed.segment || "其他企业"}；方向：${seed.tags.join("、")}。进入后扩展会继续扫描并筛选具体岗位。`,
+    description: `${seed.company}企业候选。已确认官方招聘入口；尚未把它当作具体岗位，进入官网读取真实岗位、地点和招聘状态后才会加入投递队列。`,
     query: "内置官方招聘入口",
-    entryKind: "jobList"
+    entryKind: "companyCandidate"
   }, criteria);
 }
 
@@ -452,7 +462,9 @@ function enrichResult(item, criteria) {
     ...item,
     company: seed?.company || item.companyHint || companyEval.company || inferCompany(item),
     companySegment: seed?.segment || knownProfile?.segment || item.companySegmentHint || (item.companyHint ? "新发现企业" : "待分类"),
-    resultType: item.entryKind === "jobList" ? "岗位列表" : (isPosition ? "具体岗位" : "招聘入口"),
+    resultType: item.entryKind === "companyCandidate" ? "企业候选" : (item.entryKind === "jobList" ? "岗位列表" : (isPosition ? "岗位线索" : "招聘入口")),
+    verificationStatus: isPosition ? "job_lead" : "candidate",
+    liveJobVerified: false,
     score,
     companyScore: companyEval.companyScore,
     jobScore: jobEval.jobScore,
@@ -473,6 +485,70 @@ function enrichResult(item, criteria) {
   };
 }
 
+function companyVerificationKey(company = "") {
+  return clean(company).toLowerCase().replace(/[\s·（）()_-]/g, "");
+}
+
+function applyCompanyVerification(item, records = {}) {
+  const record = records[companyVerificationKey(item.company)];
+  if (!record) return item;
+  return {
+    ...item,
+    verificationStatus: record.status || item.verificationStatus,
+    liveJobVerified: ["verified_match", "no_match"].includes(record.status),
+    liveJobCount: Number(record.liveJobCount || 0),
+    matchedJobCount: Number(record.matchedJobCount || 0),
+    verificationCheckedAt: record.checkedAt || 0,
+    verificationFlow: record.flowSummary || "",
+    verificationReason: record.reason || ""
+  };
+}
+
+async function recordCompanyVerification(company, data = {}) {
+  const key = companyVerificationKey(company);
+  if (!key) return;
+  const stored = await chrome.storage.local.get(COMPANY_VERIFICATION_KEY);
+  const records = stored[COMPANY_VERIFICATION_KEY] || {};
+  records[key] = {
+    company,
+    status: data.status || "candidate",
+    liveJobCount: Math.max(0, Number(data.liveJobCount || 0)),
+    matchedJobCount: Math.max(0, Number(data.matchedJobCount || 0)),
+    flowSummary: clean(data.flowSummary),
+    reason: clean(data.reason),
+    url: data.url || "",
+    checkedAt: Date.now()
+  };
+  const trimmed = Object.fromEntries(Object.entries(records)
+    .sort(([, a], [, b]) => Number(b.checkedAt || 0) - Number(a.checkedAt || 0))
+    .slice(0, 500));
+  await chrome.storage.local.set({ [COMPANY_VERIFICATION_KEY]: trimmed });
+}
+
+function applicationFingerprint(company = "", job = "", url = "") {
+  let host = "";
+  let jobId = "";
+  try {
+    const parsed = new URL(url);
+    host = parsed.hostname.replace(/^www\./, "").toLowerCase();
+    const segments = parsed.pathname.split("/").filter(Boolean).filter((segment) => !/^apply$/i.test(segment));
+    jobId = decodeURIComponent(segments.at(-1) || parsed.searchParams.get("jobId") || parsed.searchParams.get("positionId") || "");
+  } catch {}
+  const companyPart = companyVerificationKey(company);
+  const jobPart = clean(job).toLowerCase().replace(/[\s·（）()【】\[\]_-]/g, "").slice(0, 90);
+  return [companyPart, jobPart, host, jobId.toLowerCase()].filter(Boolean).join("|");
+}
+
+function isPreviouslySubmitted(item, company, applicationHistory = []) {
+  const fingerprint = applicationFingerprint(company, item.title || item.job, item.url);
+  return applicationHistory.some((history) => {
+    if (!["submitted", "submitted_unverified"].includes(history.status)) return false;
+    if (canonicalUrl(history.url) === canonicalUrl(item.url)) return true;
+    const historyFingerprint = history.fingerprint || applicationFingerprint(history.company, history.job, history.url);
+    return Boolean(fingerprint && historyFingerprint === fingerprint);
+  });
+}
+
 function inferCompany(item) {
   const title = clean(item.title).split(/[|｜\-_—]/)[0];
   if (title && title.length <= 20) return title;
@@ -480,14 +556,20 @@ function inferCompany(item) {
 }
 
 async function startAutopilot(profile) {
-  if (!profile.autoSubmitEnabled) throw new Error("请先勾选自动提交授权");
-  const { inactiveCompanies = {}, jobWatchState = {} } = await chrome.storage.local.get(["inactiveCompanies", "jobWatchState"]);
+  const submissionMode = ["dry_run", "review", "auto"].includes(profile.submissionMode) ? profile.submissionMode : "dry_run";
+  if (submissionMode === "auto" && !profile.autoSubmitEnabled) throw new Error("全自动模式需要先勾选最终提交授权");
+  const { inactiveCompanies = {}, jobWatchState = {}, latestCompanyCandidates = {} } = await chrome.storage.local.get(["inactiveCompanies", "jobWatchState", "latestCompanyCandidates"]);
+  const latestIsFresh = Date.now() - Number(latestCompanyCandidates.createdAt || 0) < 24 * 60 * 60 * 1000;
+  const searchedCompanies = (latestIsFresh ? latestCompanyCandidates.results || [] : [])
+    .filter((item) => !item.hardBlocked && item.url && ["企业候选", "招聘入口", "岗位列表"].includes(item.resultType))
+    .map((item) => watchedResultToSeed(item, profile))
+    .filter(Boolean);
   const watchedCompanies = (jobWatchState.candidates || [])
-    .filter((item) => !item.hardBlocked && item.url && item.resultType !== "具体岗位")
+    .filter((item) => !item.hardBlocked && item.url && ["企业候选", "招聘入口", "岗位列表"].includes(item.resultType))
     .map((item) => watchedResultToSeed(item, profile))
     .filter(Boolean);
   const baseCompanies = selectSeeds(profile.targetIndustry || "", splitList(profile.preferredCompanies));
-  const companies = [...new Map([...watchedCompanies, ...baseCompanies]
+  const companies = [...new Map([...searchedCompanies, ...watchedCompanies, ...baseCompanies]
     .filter((company) => Number(inactiveCompanies[company.company]?.retryAfter || 0) <= Date.now())
     .map((company) => [company.company, company])).values()];
   if (!companies.length) throw new Error("没有可用的企业入口");
@@ -507,8 +589,11 @@ async function startAutopilot(profile) {
     companies,
     companyIndex: -1,
     applied: 0,
+    processed: 0,
     skipped: 0,
     dailyLimit: Math.max(1, Math.min(30, Number(profile.dailyLimit || 5))),
+    maxPerCompany: Math.max(1, Math.min(10, Number(profile.maxPerCompany || 3))),
+    submissionMode,
     currentCompany: null,
     currentJob: null,
     jobQueue: [],
@@ -564,6 +649,9 @@ async function resumeAutopilot() {
   }
   autopilotState.jobQueue ||= [];
   if (!Number.isInteger(autopilotState.jobQueueIndex)) autopilotState.jobQueueIndex = -1;
+  if (!Number.isFinite(Number(autopilotState.processed))) autopilotState.processed = Number(autopilotState.applied || 0);
+  autopilotState.submissionMode ||= "dry_run";
+  autopilotState.maxPerCompany ||= 3;
   autopilotState.active = true;
   autopilotState.status = "running";
   autopilotState.stage = autopilotState.resumeStage || autopilotState.stage || "scan";
@@ -576,11 +664,11 @@ async function resumeAutopilot() {
 
 async function moveToNextCompany(reason = "") {
   if (!autopilotState?.active) return;
-  if (autopilotState.applied >= autopilotState.dailyLimit || autopilotState.companyIndex + 1 >= autopilotState.companies.length) {
+  if (autopilotState.processed >= autopilotState.dailyLimit || autopilotState.companyIndex + 1 >= autopilotState.companies.length) {
     autopilotState.active = false;
     autopilotState.status = "completed";
-    autopilotState.lastMessage = autopilotState.applied >= autopilotState.dailyLimit
-      ? `已达到本次上限：${autopilotState.dailyLimit} 个岗位`
+    autopilotState.lastMessage = autopilotState.processed >= autopilotState.dailyLimit
+      ? `已达到本次处理上限：${autopilotState.dailyLimit} 个岗位`
       : "所有候选企业已处理完成";
     await persistAutopilot();
     await notifyAutoTab(autopilotState.lastMessage, `成功/已尝试 ${autopilotState.applied}，跳过 ${autopilotState.skipped}`);
@@ -661,7 +749,7 @@ async function autoScanStage(tabId) {
     await persistAutopilot();
   }
   const { applicationHistory = [] } = await chrome.storage.local.get("applicationHistory");
-  const appliedUrls = new Set(applicationHistory.map((item) => item.url));
+  const alreadySubmitted = (item) => isPreviouslySubmitted(item, autopilotState.currentCompany?.company || item.company, applicationHistory);
 
   if (response.recommendedUrl && autopilotState.navigationDepth < 2) {
     autopilotState.navigationDepth += 1;
@@ -672,7 +760,7 @@ async function autoScanStage(tabId) {
   }
 
   const entrance = (response.entrances || []).find((item) => item.url) || response.entrances?.[0];
-  if (entrance && autopilotState.navigationDepth < 2) {
+  if (!(response.results || []).length && entrance && autopilotState.navigationDepth < 2) {
     autopilotState.navigationDepth += 1;
     autopilotState.siteFlow = null;
     await persistAutopilot();
@@ -686,9 +774,12 @@ async function autoScanStage(tabId) {
 
   const minimum = Number(autopilotState.profile.minJobFit || 0);
   const evaluated = (response.results || [])
-    .filter((item) => !appliedUrls.has(item.url))
+    .filter((item) => !alreadySubmitted(item))
     .map((item) => ({
       ...item,
+      verificationStatus: "live_job",
+      liveJobVerified: true,
+      verificationCheckedAt: Date.now(),
       matchedRole: role.role,
       rolePlanFit: role.fit,
       rankingScore: Math.round((item.score || 0) + Number(role.fit || 0) * 0.08)
@@ -713,19 +804,28 @@ async function autoScanStage(tabId) {
 
   const relaxedMinimum = Math.max(30, minimum - 10);
   let queue = (autopilotState.roleResults || [])
-    .filter((item) => !item.hardBlocked && (item.skillEligible || item.jobScore >= minimum) && !appliedUrls.has(item.url))
+    .filter((item) => !item.hardBlocked && (item.skillEligible || item.jobScore >= minimum) && !alreadySubmitted(item))
     .sort((a, b) => b.rankingScore - a.rankingScore);
   if (!queue.length) {
     queue = (autopilotState.roleResults || [])
-      .filter((item) => !item.hardBlocked && (item.skillEligible || item.jobScore >= relaxedMinimum) && !appliedUrls.has(item.url))
+      .filter((item) => !item.hardBlocked && (item.skillEligible || item.jobScore >= relaxedMinimum) && !alreadySubmitted(item))
       .sort((a, b) => b.rankingScore - a.rankingScore);
   }
+  queue = [...new Map(queue.map((item) => [applicationFingerprint(autopilotState.currentCompany?.company || item.company, item.title, item.url), item])).values()];
+  queue = queue.map((item) => ({ ...item, verificationStatus: "verified_match", liveJobVerified: true }));
   if (queue.length) {
-    const remaining = Math.max(1, autopilotState.dailyLimit - autopilotState.applied);
-    autopilotState.jobQueue = queue.slice(0, remaining);
+    const remaining = Math.max(1, autopilotState.dailyLimit - autopilotState.processed);
+    autopilotState.jobQueue = queue.slice(0, Math.min(remaining, autopilotState.maxPerCompany));
     autopilotState.jobQueueIndex = 0;
     const first = autopilotState.jobQueue[0];
     const verifiedSearch = first.officialSearchTerm ? `官网已实际搜索“${first.officialSearchTerm}”；` : "";
+    await recordCompanyVerification(autopilotState.currentCompany.company, {
+      status: "verified_match",
+      liveJobCount: (autopilotState.roleResults || []).length,
+      matchedJobCount: autopilotState.jobQueue.length,
+      flowSummary: flow.summary,
+      url: autopilotState.currentCompany.url
+    });
     return openAutoCandidate(tabId, first, `全部方向搜索完成；${verifiedSearch}${autopilotState.currentCompany.company} 共找到 ${autopilotState.jobQueue.length} 个匹配岗位，先投：${first.title}`);
   }
 
@@ -738,11 +838,27 @@ async function autoScanStage(tabId) {
       flow.pageType !== "list" ? "尚未确认岗位列表" : "",
       entryUnverified ? "尚未确认岗位卡进入详情的方式" : ""
     ].filter(Boolean).join("、");
+    await recordCompanyVerification(autopilotState.currentCompany.company, {
+      status: "flow_incomplete",
+      liveJobCount: (autopilotState.roleResults || []).length,
+      matchedJobCount: 0,
+      flowSummary: flow.summary,
+      reason: missing,
+      url: autopilotState.currentCompany.url
+    });
     autopilotState.resumeStage = "scan";
     return pauseAutopilot("waiting_site_flow", `${autopilotState.currentCompany.company} 的投递流程尚未验证完整（${missing}），已暂停而不是跳过；请检查页面后点击“处理后继续”`);
   }
 
   autopilotState.skipped += 1;
+  await recordCompanyVerification(autopilotState.currentCompany.company, {
+    status: "no_match",
+    liveJobCount: (autopilotState.roleResults || []).length,
+    matchedJobCount: 0,
+    flowSummary: flow.summary,
+    reason: "官网存在可验证岗位流程，但当前没有符合城市、类型、技能和最低匹配分的岗位",
+    url: autopilotState.currentCompany.url
+  });
   await addHistory("no_matching_job", `已逐个搜索 ${(autopilotState.rolePlan || []).map((item) => item.role).join("、")}，未找到达标岗位`);
   await markCompanyTemporarilyInactive(autopilotState.currentCompany?.company, "当前官网没有活跃的匹配岗位");
   await moveToNextCompany("全部候选方向均无匹配岗位");
@@ -766,6 +882,7 @@ async function openAutoCandidate(tabId, candidate, message = "") {
   autopilotState.resumeStage = "job";
   autopilotState.jobOpenChecks = 0;
   autopilotState.locationChecks = 0;
+  autopilotState.verifyChecks = 0;
   autopilotState.loginAttempts = 0;
   autopilotState.resumeCreateSteps = 0;
   autopilotState.resumeCreateIdleChecks = 0;
@@ -840,7 +957,7 @@ async function maybeAdoptPendingJobTab(tabId) {
 
 async function moveToNextJobInCompany(reason = "") {
   if (!autopilotState?.active) return;
-  if (autopilotState.applied >= autopilotState.dailyLimit) return moveToNextCompany(reason);
+  if (autopilotState.processed >= autopilotState.dailyLimit) return moveToNextCompany(reason);
   const queue = autopilotState.jobQueue || [];
   const nextIndex = Number(autopilotState.jobQueueIndex ?? -1) + 1;
   if (nextIndex < queue.length) {
@@ -1051,12 +1168,27 @@ async function autoApplyStage(tabId) {
     autopilotState.resumeStage = "apply";
     return pauseAutopilot("waiting_info", `有 ${response.unknown} 个新必填项需要回答；回答会被记住`);
   }
-  if (!autopilotState.profile.autoSubmitEnabled) return pauseAutopilot("ready_to_submit", "资料已填完，等待手动提交");
+  if (autopilotState.submissionMode === "dry_run") {
+    autopilotState.processed += 1;
+    await addHistory("dry_run_ready", "试运行已完成：岗位、地点和表单均已核验，未点击最终提交");
+    return moveToNextJobInCompany("试运行完成，未提交");
+  }
+  if (autopilotState.submissionMode === "review") {
+    autopilotState.resumeStage = "verify";
+    if (!autopilotState.currentJob?.reviewReadyRecorded) {
+      autopilotState.currentJob = { ...(autopilotState.currentJob || {}), reviewReadyRecorded: true };
+      await addHistory("ready_for_review", "资料已填写完成，等待用户检查并手动提交");
+    }
+    await persistAutopilot();
+    return pauseAutopilot("ready_to_submit", "资料已填完；请检查后手动提交，再点击“处理后继续”确认结果");
+  }
+  if (!autopilotState.profile.autoSubmitEnabled) return pauseAutopilot("ready_to_submit", "全自动模式缺少最终提交授权，已安全暂停");
   const submitted = await sendTabMessage(tabId, { type: "SUBMIT_APPLICATION" });
   if (submitted.captcha) return handleCaptcha("最终提交前出现验证码");
   if (!submitted.submitted) return pauseAutopilot("ready_to_submit", "未能可靠识别最终提交按钮，需要人工确认");
   autopilotState.stage = "verify";
   autopilotState.resumeStage = "verify";
+  autopilotState.verifyChecks = 0;
   autopilotState.lastMessage = "已点击最终提交，正在确认结果";
   await persistAutopilot();
   scheduleAutoStep(tabId, 2500);
@@ -1148,7 +1280,20 @@ async function returnToJobAfterResumeCreation(tabId) {
 
 async function autoVerifyStage(tabId) {
   const response = await sendTabMessage(tabId, { type: "DETECT_APPLICATION_SUCCESS" });
+  if (!response.success && Number(autopilotState.verifyChecks || 0) < 2) {
+    autopilotState.verifyChecks = Number(autopilotState.verifyChecks || 0) + 1;
+    autopilotState.lastMessage = `正在确认官网提交结果（${autopilotState.verifyChecks}/2）`;
+    await persistAutopilot();
+    scheduleAutoStep(tabId, 1800);
+    return;
+  }
+  if (!response.success && autopilotState.submissionMode === "review") {
+    autopilotState.resumeStage = "verify";
+    return pauseAutopilot("ready_to_submit", "尚未检测到官网提交成功；请确认是否已手动提交，然后再继续");
+  }
   autopilotState.applied += 1;
+  autopilotState.processed += 1;
+  autopilotState.verifyChecks = 0;
   await addHistory(response.success ? "submitted" : "submitted_unverified", response.success ? "页面确认投递成功" : "已提交但页面未返回明确成功文字");
   await moveToNextJobInCompany(response.success ? "投递成功" : "已提交，结果待核验");
 }
@@ -1210,13 +1355,19 @@ async function notifyAutoTab(title, message) {
 
 async function addHistory(status, note) {
   const { applicationHistory = [] } = await chrome.storage.local.get("applicationHistory");
+  const company = autopilotState.currentCompany?.company || "未知企业";
+  const job = autopilotState.currentJob?.title || "未选择岗位";
+  const url = autopilotState.currentJob?.url || autopilotState.currentCompany?.url || "";
   applicationHistory.push({
     time: new Date().toISOString(),
-    company: autopilotState.currentCompany?.company || "未知企业",
-    job: autopilotState.currentJob?.title || "未选择岗位",
-    url: autopilotState.currentJob?.url || autopilotState.currentCompany?.url || "",
+    company,
+    job,
+    url,
+    fingerprint: applicationFingerprint(company, job, url),
     status,
-    note
+    note,
+    matchedCities: autopilotState.currentJob?.matchedCities || [],
+    locationEvidence: autopilotState.currentJob?.locationEvidence || []
   });
   await chrome.storage.local.set({ applicationHistory: applicationHistory.slice(-500) });
 }
@@ -1245,9 +1396,9 @@ async function waitForTabReady(tabId) {
   }
 }
 
-async function navigateAndScan(tabId, url, profile) {
+async function navigateAndScan(tabId, url, profile, company = "") {
   if (!tabId || !url) throw new Error("缺少岗位页面信息");
-  await chrome.storage.local.set({ pendingManualScan: { tabId, profile, createdAt: Date.now(), depth: 0 } });
+  await chrome.storage.local.set({ pendingManualScan: { tabId, profile, company, createdAt: Date.now(), depth: 0 } });
   await chrome.tabs.update(tabId, { url, active: true });
   return { navigating: true };
 }
@@ -1277,21 +1428,57 @@ async function handlePendingManualScan(tabId) {
   if (!pendingManualScan || pendingManualScan.tabId !== tabId || Date.now() - pendingManualScan.createdAt > 10 * 60 * 1000) return;
   await new Promise((resolve) => setTimeout(resolve, 1400));
   const response = await sendTabMessage(tabId, { type: "SCAN_JOB_LIST", profile: pendingManualScan.profile });
+  const flow = await sendTabMessage(tabId, { type: "INSPECT_RECRUITMENT_FLOW", profile: pendingManualScan.profile }).catch(() => null);
   if (!response.results?.length && response.recommendedUrl && pendingManualScan.depth < 2) {
     pendingManualScan.depth += 1;
     await chrome.storage.local.set({ pendingManualScan });
     await chrome.tabs.update(tabId, { url: response.recommendedUrl, active: true });
     return;
   }
+  if (!response.results?.length && response.entrances?.length && pendingManualScan.depth < 3) {
+    const entrance = response.entrances.find((item) => item.url) || response.entrances[0];
+    pendingManualScan.depth += 1;
+    await chrome.storage.local.set({ pendingManualScan });
+    if (entrance.url) {
+      await chrome.tabs.update(tabId, { url: entrance.url, active: true });
+    } else {
+      await sendTabMessage(tabId, { type: "CLICK_JOB_ENTRANCE", index: entrance.index });
+      setTimeout(() => handlePendingManualScan(tabId).catch(() => {}), 1600);
+    }
+    return;
+  }
+  const minimum = Number(pendingManualScan.profile?.minJobFit || 0);
+  const isMatched = (item) => !item.hardBlocked && (item.skillEligible || Number(item.jobScore ?? item.score ?? 0) >= minimum);
+  const verifiedResults = (response.results || []).map((item) => ({
+    ...item,
+    verificationStatus: isMatched(item) ? "verified_match" : "live_job",
+    liveJobVerified: true,
+    verificationCheckedAt: Date.now()
+  }));
+  const matchedJobCount = verifiedResults.filter(isMatched).length;
+  for (const item of verifiedResults) {
+    item.liveJobCount = verifiedResults.length;
+    item.matchedJobCount = matchedJobCount;
+  }
+  if (pendingManualScan.company) {
+    await recordCompanyVerification(pendingManualScan.company, {
+      status: matchedJobCount ? "verified_match" : "no_match",
+      liveJobCount: verifiedResults.length,
+      matchedJobCount,
+      flowSummary: flow?.summary || "",
+      reason: verifiedResults.length ? "已读取官网真实岗位并按当前资料筛选" : "官网当前未识别到活跃岗位",
+      url: (await chrome.tabs.get(tabId)).url
+    });
+  }
   await chrome.storage.local.set({
-    latestManualScan: { ...response, createdAt: Date.now(), url: (await chrome.tabs.get(tabId)).url },
+    latestManualScan: { ...response, flow, results: verifiedResults, company: pendingManualScan.company, matchedJobCount, createdAt: Date.now(), url: (await chrome.tabs.get(tabId)).url },
     pendingManualScan: null
   });
   await chrome.tabs.sendMessage(tabId, {
     type: "SHOW_AUTOMATION_NOTICE",
     notice: {
-      title: response.results?.length ? `已找到 ${response.results.length} 个岗位` : "仍未识别到具体岗位",
-      message: response.results?.length ? "打开扩展即可查看排序结果。" : "该网站可能需要登录或先选择招聘项目。"
+      title: verifiedResults.length ? `官网读取到 ${verifiedResults.length} 个真实岗位` : "仍未识别到具体岗位",
+      message: verifiedResults.length ? `其中 ${matchedJobCount} 个符合当前条件；打开扩展即可查看。` : "该网站可能需要登录、选择招聘项目，或暂时没有公开岗位。"
     }
   }).catch(() => {});
 }

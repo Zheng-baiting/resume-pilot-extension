@@ -4,7 +4,7 @@ const PROFILE_FIELDS = [
   "targetIndustry", "positionType", "preferredCompanies", "qualityFocus",
   "availableDays", "internshipMonths", "maxExperienceYears", "minJobFit",
   "minDailySalary", "minMonthlySalary", "avoidJobKeywords", "avoidCompanyKeywords",
-  "dailyLimit", "captchaPolicy", "autoSubmitEnabled"
+  "dailyLimit", "maxPerCompany", "captchaPolicy", "submissionMode", "autoSubmitEnabled"
 ];
 
 let searchPage = 0;
@@ -48,9 +48,69 @@ function bindActions() {
   document.getElementById("fillPage").addEventListener("click", fillCurrentPage);
   document.getElementById("importResumeFile").addEventListener("change", importResumeFile);
   document.getElementById("resumeFileInput").addEventListener("change", saveResumeFile);
+  document.getElementById("exportDiagnostics").addEventListener("click", exportDiagnostics);
+  document.getElementById("clearLocalData").addEventListener("click", clearLocalData);
   document.getElementById("startAutopilot").addEventListener("click", startAutopilot);
   document.getElementById("resumeAutopilot").addEventListener("click", resumeAutopilot);
   document.getElementById("stopAutopilot").addEventListener("click", stopAutopilot);
+}
+
+async function exportDiagnostics() {
+  const data = await chrome.storage.local.get(["autopilotState", "applicationHistory", "companyVerification", "jobWatchState"]);
+  const state = data.autopilotState || {};
+  const diagnostic = {
+    exportedAt: new Date().toISOString(),
+    extensionVersion: chrome.runtime.getManifest().version,
+    autopilot: {
+      status: state.status || "not_started",
+      stage: state.stage || "",
+      submissionMode: state.submissionMode || "",
+      processed: Number(state.processed || 0),
+      applied: Number(state.applied || 0),
+      skipped: Number(state.skipped || 0),
+      currentCompany: state.currentCompany?.company || "",
+      currentJob: state.currentJob?.title || "",
+      siteFlow: state.siteFlow ? {
+        ...state.siteFlow,
+        url: sanitizeDiagnosticUrl(state.siteFlow.url),
+        embeddedUrl: sanitizeDiagnosticUrl(state.siteFlow.embeddedUrl)
+      } : null,
+      lastMessage: state.lastMessage || ""
+    },
+    applicationHistory: (data.applicationHistory || []).map(({ time, company, job, url, status, note }) => ({ time, company, job, url: sanitizeDiagnosticUrl(url), status, note })),
+    companyVerification: Object.fromEntries(Object.entries(data.companyVerification || {}).map(([key, value]) => [key, { ...value, url: sanitizeDiagnosticUrl(value.url) }])),
+    watcher: {
+      lastCheckedAt: data.jobWatchState?.lastCheckedAt || 0,
+      lastNewCount: data.jobWatchState?.lastNewCount || 0,
+      candidateCount: data.jobWatchState?.candidates?.length || 0
+    },
+    privacy: "不包含姓名、手机号、邮箱、简历正文、附件或已保存答案"
+  };
+  const blob = new Blob([JSON.stringify(diagnostic, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `resume-pilot-diagnostic-${Date.now()}.json`;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  flash("已导出不含个人资料的诊断文件");
+}
+
+function sanitizeDiagnosticUrl(value = "") {
+  try {
+    const parsed = new URL(value);
+    const pathname = parsed.pathname
+      .replace(/[0-9a-f]{8}-[0-9a-f-]{27,}/gi, "[id]")
+      .replace(/[A-Za-z0-9_-]{24,}/g, "[id]");
+    return `${parsed.origin}${pathname}`;
+  } catch { return ""; }
+}
+
+async function clearLocalData() {
+  if (!confirm("确定清除本扩展保存在浏览器中的简历、资料、附件、答案和投递记录吗？此操作无法撤销。")) return;
+  await chrome.runtime.sendMessage({ type: "STOP_AUTOPILOT" }).catch(() => {});
+  await chrome.storage.local.clear();
+  location.reload();
 }
 
 async function restoreProfile() {
@@ -324,13 +384,14 @@ async function startAutopilot() {
   await saveProfile();
   const profile = collectProfile();
   const status = document.getElementById("autopilotStatus");
-  if (!profile.autoSubmitEnabled) {
+  if (profile.submissionMode === "auto" && !profile.autoSubmitEnabled) {
     status.className = "status error";
-    status.textContent = "请先勾选自动提交授权。";
+    status.textContent = "全自动模式需要先勾选最终提交授权。";
     return;
   }
   status.className = "status";
-  status.textContent = "正在启动自动投递队列…";
+  const modeLabels = { dry_run: "试运行", review: "提交前确认", auto: "全自动" };
+  status.textContent = `正在启动${modeLabels[profile.submissionMode] || "试运行"}队列…`;
   const response = await chrome.runtime.sendMessage({ type: "START_AUTOPILOT", profile });
   if (!response?.ok) {
     status.className = "status error";
@@ -376,7 +437,8 @@ function renderAutopilotState(state) {
     return;
   }
   status.className = state.status.startsWith("waiting") || state.status === "error" ? "status error" : "status success";
-  status.textContent = `${state.lastMessage || state.status}｜已投/尝试 ${state.applied || 0}，跳过 ${state.skipped || 0}`;
+  const modeLabels = { dry_run: "试运行", review: "提交前确认", auto: "全自动" };
+  status.textContent = `${state.lastMessage || state.status}｜${modeLabels[state.submissionMode] || "试运行"} · 已处理 ${state.processed || 0} · 已投 ${state.applied || 0} · 跳过 ${state.skipped || 0}`;
   const plan = state.rolePlan || [];
   const roleText = plan.length
     ? `简历岗位计划：${plan.map((item, index) => `${index === state.roleIndex ? "▶ " : ""}${item.role} ${item.fit}分`).join(" · ")}`
@@ -401,7 +463,9 @@ function historyStatus(status) {
     no_matching_job: "无匹配岗位",
     city_mismatch: "地点不匹配",
     city_unconfirmed: "地点未确认",
-    skipped_captcha: "验证码跳过"
+    skipped_captcha: "验证码跳过",
+    dry_run_ready: "试运行通过（未提交）",
+    ready_for_review: "等待提交前确认"
   };
   return labels[status] || status;
 }
@@ -437,7 +501,7 @@ async function searchCompanies(reset = true) {
       ? ` 本轮从公开招聘信息发现 ${response.newlyDiscoveredCompanies.length} 家新企业并已回查官网。`
       : "";
     status.textContent = response.results.length
-      ? `已显示 ${renderedUrls.size} 个企业/岗位候选；${searchHasMore ? "向下滑动继续加载。" : "已加载当前活跃候选。"}${discovered}`
+      ? `已显示 ${renderedUrls.size} 个企业候选或岗位线索；只有标记“已验证匹配”的结果才代表官网已读取到合适岗位。${searchHasMore ? "向下滑动继续加载。" : "已加载当前候选。"}${discovered}`
       : "没有找到合适结果，请换一组条件。";
     document.getElementById("loadMore").hidden = !searchHasMore;
     if (searchHasMore && document.body.scrollHeight <= window.innerHeight + 80) setTimeout(loadMoreCompanies, 250);
@@ -504,20 +568,36 @@ function renderResults(items) {
     const payBadge = makeBadge(`待遇 ${item.compensationScore ?? "?"}`, "pay");
     const cityLabels = { matched: "地点符合", flexible: "全国/远程", unrestricted: "地点不限", unknown: "进详情核验", mismatch: "地点不符" };
     const cityBadge = makeBadge(cityLabels[item.cityMatchStatus] || "进官网核验", item.cityMatchStatus === "matched" ? "city" : "");
-    badges.append(companyBadge, jobBadge, payBadge, cityBadge);
+    const verificationLabels = {
+      candidate: "企业候选",
+      job_lead: "岗位线索",
+      live_job: "官网真实岗位",
+      verified_match: "已验证匹配",
+      no_match: "已验证无匹配",
+      flow_incomplete: "流程待兼容"
+    };
+    const verificationBadge = makeBadge(verificationLabels[item.verificationStatus] || "待官网核验", `verify ${item.verificationStatus || "candidate"}`);
+    badges.append(verificationBadge, companyBadge, jobBadge, payBadge, cityBadge);
     titleRow.append(link, badges);
     const description = document.createElement("p");
     description.textContent = item.description;
     const meta = document.createElement("div");
     meta.className = "result-meta";
     meta.textContent = `${item.company || "待核验企业"} · ${item.companySegment || "待分类"} · ${safeHost(item.url)}`;
+    const verification = document.createElement("div");
+    verification.className = "result-verification";
+    verification.textContent = item.liveJobVerified
+      ? `官网最近核验：共读取 ${item.liveJobCount || 0} 个真实岗位，符合当前条件 ${item.matchedJobCount || 0} 个${item.verificationCheckedAt ? ` · ${formatCheckedAt(item.verificationCheckedAt)}` : ""}`
+      : (item.verificationStatus === "flow_incomplete"
+        ? `官网流程尚未完整识别：${item.verificationReason || "需要更新适配规则"}`
+        : "尚未读取官网真实岗位；当前结果只是企业候选或公开岗位线索。");
     const reasons = document.createElement("div");
     reasons.className = "result-reasons";
     const pay = document.createElement("div");
     pay.className = "result-reasons";
     pay.textContent = `待遇判断：${item.compensationLabel || "未获取"}`;
     reasons.textContent = item.reasons?.length ? `推荐依据：${item.reasons.join(" · ")}` : "推荐依据不足，请人工核验";
-    card.append(titleRow, description, pay, reasons, meta);
+    card.append(titleRow, description, verification, pay, reasons, meta);
     if (item.warnings?.length) {
       const warning = document.createElement("div");
       warning.className = "result-warning";
@@ -538,8 +618,36 @@ function renderResults(items) {
       }
       card.append(evidence);
     }
+    if (["企业候选", "招聘入口", "岗位列表"].includes(item.resultType)) {
+      const verifyButton = document.createElement("button");
+      verifyButton.type = "button";
+      verifyButton.className = "secondary verify-company";
+      verifyButton.textContent = "打开官网并核验真实岗位";
+      verifyButton.addEventListener("click", () => openCandidateForVerification(item));
+      card.append(verifyButton);
+    }
     container.append(card);
   }
+}
+
+function formatCheckedAt(value) {
+  const date = new Date(Number(value));
+  if (Number.isNaN(date.getTime())) return "";
+  return `核验于 ${date.toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}`;
+}
+
+async function openCandidateForVerification(item) {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab?.id) return renderAutopilotError("没有可用于打开官网的浏览器标签页");
+  const response = await chrome.runtime.sendMessage({
+    type: "NAVIGATE_AND_SCAN",
+    tabId: tab.id,
+    url: item.url,
+    profile: collectProfile(),
+    company: item.company
+  });
+  if (!response?.ok) return renderAutopilotError(response?.error || "无法开始官网核验");
+  window.close();
 }
 
 async function openDynamicJob(item) {
@@ -563,7 +671,7 @@ function makeBadge(text, extraClass = "") {
 
 function filterResults(items, profile) {
   const minimum = Number(profile.minJobFit || 0);
-  return items.filter((item) => ["招聘入口", "岗位列表"].includes(item.resultType) || (!item.hardBlocked && (item.skillEligible || (item.jobScore ?? item.score ?? 0) >= minimum)));
+  return items.filter((item) => ["企业候选", "招聘入口", "岗位列表"].includes(item.resultType) || (!item.hardBlocked && (item.skillEligible || (item.jobScore ?? item.score ?? 0) >= minimum)));
 }
 
 function displayScannedResults(items, profile) {

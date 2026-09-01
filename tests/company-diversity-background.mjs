@@ -9,7 +9,7 @@ const fetchedUrls = [];
 const context = {
   chrome: {
     runtime: {
-      getManifest: () => ({ version: "0.18.0" }),
+      getManifest: () => ({ version: "1.0.0" }),
       onMessage: { addListener() {} },
       onInstalled: { addListener() {} },
       onStartup: { addListener() {} }
@@ -43,6 +43,27 @@ await new Promise((resolve) => setTimeout(resolve, 0));
 assert.match(backgroundSource, /type: "VERIFY_JOB_LOCATION"/);
 assert.match(backgroundSource, /city_unconfirmed/);
 assert.match(backgroundSource, /city_mismatch/);
+assert.match(backgroundSource, /submissionMode === "dry_run"/);
+assert.match(backgroundSource, /applicationFingerprint/);
+assert.match(backgroundSource, /latestCompanyCandidates/);
+
+const candidate = vm.runInContext(`(() => {
+  const seed = selectSeeds("人工智能", ["Zilliz"])[0];
+  return makeSeedResult(seed, {
+    role: "软件开发", city: "上海", industry: "人工智能", positionType: "实习",
+    skills: ["JavaScript"], preferredCompanies: ["Zilliz"], matchedSeeds: [seed]
+  });
+})()`, context);
+assert.equal(candidate.resultType, "企业候选");
+assert.equal(candidate.verificationStatus, "candidate");
+assert.match(candidate.title, /官方招聘入口/);
+assert.doesNotMatch(candidate.title, /实习生岗位/);
+const verifiedCandidate = vm.runInContext(`applyCompanyVerification(${JSON.stringify(candidate)}, {
+  zilliz: { status: "no_match", liveJobCount: 14, matchedJobCount: 0, checkedAt: 123, reason: "没有实习岗位" }
+})`, context);
+assert.equal(verifiedCandidate.verificationStatus, "no_match");
+assert.equal(verifiedCandidate.liveJobCount, 14);
+assert.equal(verifiedCandidate.matchedJobCount, 0);
 
 const firstPage = vm.runInContext("selectSeeds('通信、人工智能', []).slice(0, 8).map(({ company, segment }) => ({ company, segment }))", context);
 assert.ok(new Set(firstPage.map((item) => item.segment)).size >= 4, JSON.stringify(firstPage));

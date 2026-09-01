@@ -12,7 +12,7 @@ const FIELD_RULES = [
   { key: "targetCity", patterns: [/期望.*城市|意向.*地点|工作.*地点|desired.*location|preferred.*city/i] },
   { key: "resumeText", patterns: [/个人.*总结|自我.*评价|个人.*简介|summary|profile/i] }
 ];
-const CONTENT_SCRIPT_VERSION = "0.18.0";
+const CONTENT_SCRIPT_VERSION = "1.0.0";
 const MAX_COLLECTED_JOBS = 200;
 const MAX_JOB_PAGES = 20;
 
@@ -772,9 +772,11 @@ function getRecruitmentSiteAdapter() {
   };
 }
 
-function detectRecruitmentPlatform() {
-  const host = location.hostname.toLowerCase();
-  const url = location.href.toLowerCase();
+function detectRecruitmentPlatform(value = location.href) {
+  let parsed;
+  try { parsed = new URL(value, location.href); } catch { return null; }
+  const host = parsed.hostname.toLowerCase();
+  const url = parsed.href.toLowerCase();
   if (/myworkdayjobs\.com$|workdayjobs\.com$/.test(host) || /\/wday\/cxs\//.test(url)) {
     return { id: "ats-workday", name: "Workday", detailPattern: "职位列表→/job/…详情", applyPattern: "详情→Apply/立即申请→候选人账户" };
   }
@@ -802,10 +804,29 @@ function detectRecruitmentPlatform() {
   return null;
 }
 
+function isKnownAtsJobDetailUrl(value) {
+  let parsed;
+  try { parsed = new URL(value, location.href); } catch { return false; }
+  const host = parsed.hostname.toLowerCase();
+  const pathname = parsed.pathname.replace(/\/$/, "");
+  const segments = pathname.split("/").filter(Boolean);
+  const platform = detectRecruitmentPlatform(parsed.href);
+  if (!platform) {
+    return /(?:\/campus\/position\/[^/?#]+\/detail|\/(?:job|jobs|position|positions|posting|postings)\/[^/?#]+(?:\/detail)?|\/careers?\/(?:job|position)\/[^/?#]+|[?&](?:job_?id|position_?id|postid|advertisementid)=)/i.test(parsed.href);
+  }
+  if (platform.id === "ats-lever" || platform.id === "ats-ashby") {
+    return segments.length >= 2 && !/(?:jobs?|positions?|postings?|careers?|apply)$/i.test(segments.at(-1) || "");
+  }
+  if (platform.id === "ats-greenhouse") return /\/jobs?\/[A-Za-z0-9_-]+/i.test(pathname);
+  if (platform.id === "ats-workday") return /\/job\//i.test(pathname) || /[?&]job_?id=/i.test(parsed.search);
+  if (platform.id === "ats-smartrecruiters") return segments.length >= 2 && host !== "www.smartrecruiters.com";
+  if (platform.id === "ats-feishu") return /\/position\/[A-Za-z0-9_-]+\/detail/i.test(pathname);
+  if (platform.id === "ats-moka") return /(?:\/|#\/)(?:job|position)\/[A-Za-z0-9_-]+/i.test(`${pathname}${parsed.hash}`);
+  return false;
+}
+
 function findDirectJobLinks() {
-  const detailUrlPattern = /(?:\/campus\/position\/[^/?#]+\/detail|\/(?:job|jobs|position|positions|posting|postings)\/[^/?#]+(?:\/detail)?|\/careers?\/(?:job|position)\/[^/?#]+|[?&](?:job_?id|position_?id|postid|advertisementid)=)/i;
   const listUrlPattern = /(?:job-list|position-list|\/campus\/position\/?$|\/(?:jobs?|positions?|careers?)\/?$)/i;
-  const platform = detectRecruitmentPlatform();
   return [...document.querySelectorAll("a[href]")]
     .filter(isVisible)
     .filter((link) => {
@@ -814,14 +835,7 @@ function findDirectJobLinks() {
       const parsed = new URL(url);
       if (!/^https?:/i.test(url) || listUrlPattern.test(parsed.pathname)) return false;
       const text = String(link.innerText || link.textContent || link.getAttribute("aria-label") || "").replace(/\s+/g, " ").trim();
-      const segments = parsed.pathname.split("/").filter(Boolean);
-      const platformSpecific = Boolean(platform && (
-        (["ats-lever", "ats-ashby", "ats-smartrecruiters"].includes(platform.id) && segments.length >= 2)
-        || (platform.id === "ats-greenhouse" && /\/jobs?\//i.test(parsed.pathname))
-        || (platform.id === "ats-workday" && /\/job\//i.test(parsed.pathname))
-        || (["ats-moka", "ats-feishu"].includes(platform.id) && /(?:job|position|post|recruit)/i.test(url))
-      ));
-      return text.length >= 4 && (detailUrlPattern.test(url) || platformSpecific)
+      return text.length >= 4 && isKnownAtsJobDetailUrl(url)
         && /(职位|岗位|实习|校招|应届|工程师|开发|产品|运营|设计|算法|测试|job|position|intern|engineer|developer)/i.test(`${text} ${url}`);
     });
 }
@@ -856,7 +870,9 @@ function inspectRecruitmentFlow(profile = {}) {
   const scannedCandidates = scanJobList(profile);
   // 入口能力必须与本轮关键词匹配解耦：第一页没有命中目标岗位时，官网仍然可能
   // 存在完全可靠的详情链接。字节卡住正是因为旧逻辑把两件事混为一谈。
-  const directJobLinks = findDirectJobLinks().length;
+  const directLinks = findDirectJobLinks();
+  const directJobLinks = directLinks.length;
+  const linkedAts = [...new Set(directLinks.map((link) => detectRecruitmentPlatform(link.href)?.name).filter(Boolean))];
   // 流程识别应判断官网是否存在可点击岗位卡，而不是要求卡片先通过本轮岗位关键词评分。
   // 否则“有岗位列表但当前词未命中”会被错误识别成没有详情入口。
   const clickCards = Math.max(scannedCandidates.filter((item) => item.clickToken).length, findClickableJobCards().length);
@@ -904,6 +920,7 @@ function inspectRecruitmentFlow(profile = {}) {
     openMethod,
     pagination,
     directJobLinks,
+    linkedAts,
     clickCards,
     applicationEntries: applicationEntries.length,
     embeddedUrl: embeddedFrame?.src || "",
@@ -914,6 +931,7 @@ function inspectRecruitmentFlow(profile = {}) {
     flowEvidence: {
       searchControl: Boolean(searchInput),
       directJobLinks,
+      linkedAts,
       clickCards,
       pagination,
       applicationEntries: applicationEntries.length
@@ -1277,7 +1295,7 @@ function scanJobList(profile) {
     if (!/^https?:/i.test(url) || seen.has(url)) continue;
     // 很多 SPA 的整页容器类名也包含 position/job。对已经明确指向详情的链接，
     // 直接把链接自身当作岗位卡，避免误取到包住筛选栏和全部结果的巨大父容器。
-    const directDetail = /(?:\/campus\/position\/[^/?#]+\/detail|\/(?:job|jobs|position|positions|posting|postings)\/[^/?#]+(?:\/detail)?|[?&](?:job_?id|position_?id|postid|advertisementid)=)/i.test(url);
+    const directDetail = isKnownAtsJobDetailUrl(url);
     const card = directDetail ? link : link.closest("li, article, tr, [class*='job'], [class*='position'], [class*='card'], [class*='item']");
     const text = String(card?.innerText || link.innerText || link.getAttribute("aria-label") || "").replace(/\s+/g, " ").trim();
     if (text.length < 4 || text.length > 6000 || !looksLikeJob(text, url, roleTerms, positionType, skillTerms)) continue;
@@ -1458,7 +1476,7 @@ function looksLikeJob(text, url, roleTerms, positionType, skillTerms = []) {
   const roleSignal = roleTerms.some((term) => haystack.toLowerCase().includes(term.toLowerCase()));
   const skillSignal = skillTerms.some((term) => haystack.toLowerCase().includes(term.toLowerCase()));
   const typeSignal = positionType && positionType !== "不限" && haystack.toLowerCase().includes(positionType.toLowerCase());
-  return jobSignal && (roleSignal || skillSignal || typeSignal || /(position|job\/|jobdetail|职位详情)/i.test(url));
+  return jobSignal && (roleSignal || skillSignal || typeSignal || isKnownAtsJobDetailUrl(url) || /(jobdetail|职位详情|岗位详情)/i.test(url));
 }
 
 function splitTerms(value = "") {

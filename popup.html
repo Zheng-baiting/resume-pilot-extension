@@ -47,6 +47,10 @@
         </div>
         <label>技能关键词<input id="skills" placeholder="Python, 数据分析, React" /></label>
         <button id="saveProfile" class="primary full">保存资料</button>
+        <div class="row privacy-actions">
+          <button id="exportDiagnostics" class="secondary">导出脱敏诊断</button>
+          <button id="clearLocalData" class="secondary danger">清除本地资料</button>
+        </div>
       </section>
 
       <section id="search" class="panel">
@@ -81,9 +85,9 @@
           <label>排除企业关键词<input id="avoidCompanyKeywords" placeholder="外包、劳务派遣" /></label>
         </details>
         <label>优先企业（可选）<textarea id="preferredCompanies" rows="3" placeholder="腾讯、字节跳动、华为；不填则按条件搜索"></textarea></label>
-        <button id="searchCompanies" class="primary full">自动寻找合适企业与岗位</button>
+        <button id="searchCompanies" class="primary full">发现企业并核验岗位入口</button>
         <button id="scanJobs" class="secondary full spaced">分析当前官网的岗位列表</button>
-        <div class="search-hint">综合排序：企业质量 30% + 岗位匹配 45% + 待遇 25%。命中任一简历技能即可进入候选；未公开薪资不会被默认视为高待遇。</div>
+        <div class="search-hint">企业候选只表示已确认招聘官网，不代表已有合适岗位。读取到真实岗位名称、地点和招聘状态后，才会标记为“已验证匹配”。综合排序：企业质量 30% + 岗位匹配 45% + 待遇 25%。</div>
         <div id="searchStatus" class="status" role="status"></div>
         <div id="results" class="results"></div>
         <button id="loadMore" class="secondary full load-more" hidden>继续加载更多企业</button>
@@ -91,20 +95,22 @@
 
       <section id="apply" class="panel">
         <div class="notice">
-          手动模式只填写能确认的字段；全自动模式仅在你勾选授权后提交。未知必填项会暂停询问并记住答案。
+          建议先用“试运行”验证岗位、地点和表单。只有选择全自动并勾选授权时才会点击最终提交；未知必填项会暂停询问并记住答案。
         </div>
         <button id="fillPage" class="primary full">扫描并填写当前页面</button>
         <div id="fillStatus" class="status" role="status"></div>
         <div id="unknownFields" class="unknown-fields"></div>
         <div class="autopilot-card">
-          <h2>全自动投递队列</h2>
+          <h2>岗位核验与投递队列</h2>
+          <label>运行模式<select id="submissionMode"><option value="dry_run">试运行：填写但不提交（推荐）</option><option value="review">提交前由我确认</option><option value="auto">全自动最终提交</option></select></label>
           <div class="grid">
-            <label>本次最多投递<input id="dailyLimit" type="number" min="1" max="30" value="5" /></label>
+            <label>本次最多处理岗位<input id="dailyLimit" type="number" min="1" max="30" value="5" /></label>
+            <label>每家最多岗位<input id="maxPerCompany" type="number" min="1" max="10" value="3" /></label>
             <label>遇到验证码<select id="captchaPolicy"><option value="ask">暂停找我处理</option><option value="skip">跳过当前岗位</option></select></label>
           </div>
           <label class="consent"><input id="autoSubmitEnabled" type="checkbox" /> 我授权扩展对匹配且资料完整的岗位点击最终提交；未知必填项先询问并记住答案。</label>
           <div class="row">
-            <button id="startAutopilot" class="primary">开始全自动投递</button>
+            <button id="startAutopilot" class="primary">开始运行</button>
             <button id="resumeAutopilot" class="secondary">处理后继续</button>
             <button id="stopAutopilot" class="secondary">停止</button>
           </div>

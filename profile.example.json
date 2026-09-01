@@ -23,6 +23,8 @@
   "avoidCompanyKeywords": "外包、劳务派遣",
   "preferredCompanies": "腾讯、字节跳动、华为",
   "dailyLimit": "1",
+  "maxPerCompany": "3",
   "captchaPolicy": "ask",
+  "submissionMode": "dry_run",
   "autoSubmitEnabled": false
 }

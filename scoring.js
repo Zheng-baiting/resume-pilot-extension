@@ -327,10 +327,22 @@
       else warnings.push("摘要中未发现简历技能词");
     } else score += 8;
 
+    const internshipSignal = /(实习|日常实习|暑期实习|intern(?:ship)?)/i.test(haystack);
+    const campusSignal = /(校园招聘|校招|应届|graduate|new grad|campus)/i.test(haystack);
+    const experiencedSignal = /(社会招聘|社招|experienced hire|senior|staff engineer|principal|主管|负责人|经理|总监|专家)/i.test(haystack);
+    const fullTimeSignal = /(全职|full[- ]?time|permanent)/i.test(haystack);
     if (!positionType || positionType === "不限") score += 6;
-    else if (haystack.includes(positionType.toLowerCase()) || (positionType === "校园招聘" && /(校招|应届|campus|graduate)/i.test(haystack))) {
+    else if (haystack.includes(positionType.toLowerCase()) || (positionType === "校园招聘" && campusSignal) || (positionType === "实习" && internshipSignal)) {
       score += 10;
       reasons.push(positionType);
+    } else if (positionType === "实习" && (experiencedSignal || fullTimeSignal)) {
+      score -= 45;
+      hardBlocked = true;
+      warnings.push("岗位明确属于高级/全职社会招聘，不符合实习目标");
+    } else if (positionType === "校园招聘" && experiencedSignal && !campusSignal) {
+      score -= 45;
+      hardBlocked = true;
+      warnings.push("岗位明确属于社会招聘，不符合校园招聘目标");
     } else warnings.push(`未确认属于${positionType}`);
 
     if (graduationYear) {
