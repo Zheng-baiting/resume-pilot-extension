@@ -12,7 +12,7 @@ const FIELD_RULES = [
   { key: "targetCity", patterns: [/期望.*城市|意向.*地点|工作.*地点|desired.*location|preferred.*city/i] },
   { key: "resumeText", patterns: [/个人.*总结|自我.*评价|个人.*简介|summary|profile/i] }
 ];
-const CONTENT_SCRIPT_VERSION = "1.0.0";
+const CONTENT_SCRIPT_VERSION = "1.0.1";
 const MAX_COLLECTED_JOBS = 200;
 const MAX_JOB_PAGES = 20;
 
@@ -107,7 +107,8 @@ async function deepScanJobList(profile) {
 
   return {
     results: [...collected.values()].sort((a, b) => b.score - a.score).slice(0, MAX_COLLECTED_JOBS),
-    entrances: discoverJobEntrances(),
+    entrances: discoverJobEntrances(profile),
+    sourceUrl: location.href,
     recommendedUrl: getRecommendedJobListUrl(profile),
     officialFilters: {
       positionType: String(profile.positionType || ""),
@@ -792,6 +793,9 @@ function detectRecruitmentPlatform(value = location.href) {
   if (/ashbyhq\.com$/.test(host)) {
     return { id: "ats-ashby", name: "Ashby", detailPattern: "岗位链接→/{company}/{posting-id}", applyPattern: "详情→Apply→申请表" };
   }
+  if (/zhiye\.com$/.test(host)) {
+    return { id: "ats-zhiye", name: "北森招聘", detailPattern: "招聘频道→职位列表→/campus|social/detail", applyPattern: "岗位详情→立即申请→登录/简历表" };
+  }
   if (/mokahr\.com$|moka\.hr$/.test(host)) {
     return { id: "ats-moka", name: "Moka", detailPattern: "职位列表→岗位 ID 详情", applyPattern: "详情→申请职位→登录/简历表" };
   }
@@ -822,6 +826,7 @@ function isKnownAtsJobDetailUrl(value) {
   if (platform.id === "ats-smartrecruiters") return segments.length >= 2 && host !== "www.smartrecruiters.com";
   if (platform.id === "ats-feishu") return /\/position\/[A-Za-z0-9_-]+\/detail/i.test(pathname);
   if (platform.id === "ats-moka") return /(?:\/|#\/)(?:job|position)\/[A-Za-z0-9_-]+/i.test(`${pathname}${parsed.hash}`);
+  if (platform.id === "ats-zhiye") return /\/(?:campus|social)\/detail/i.test(pathname) && /[?&](?:jobAdId|jobId)=/i.test(parsed.search);
   return false;
 }
 
@@ -879,7 +884,7 @@ function inspectRecruitmentFlow(profile = {}) {
   const embeddedFrame = [...document.querySelectorAll("iframe[src]")]
     .find((frame) => isVisible(frame) && /(job|career|recruit|position|vacanc|apply|ats|workday|greenhouse|lever)/i.test(frame.src || ""));
   const applicationEntries = findApplicationEntries();
-  const entrances = discoverJobEntrances();
+  const entrances = discoverJobEntrances(profile);
   let pageType = "unknown";
   if (login) pageType = "login";
   else if (captcha) pageType = "captcha";
@@ -1063,16 +1068,59 @@ function getRecommendedJobListUrl(profile) {
   return target;
 }
 
-function discoverJobEntrances() {
-  const pattern = /(查看职位|搜索职位|职位搜索|浏览职位|全部职位|在招职位|热招职位|立即投递|开始申请|立即加入|加入我们|日常实习生|view jobs|search jobs|open positions|apply now)/i;
-  return [...document.querySelectorAll("a[href], button, [role='button']")]
-    .filter((element) => isVisible(element) && pattern.test(element.innerText || element.textContent || element.getAttribute("aria-label") || ""))
-    .slice(0, 12)
-    .map((element, index) => ({
-      index,
-      label: String(element.innerText || element.textContent || element.getAttribute("aria-label") || "职位入口").replace(/\s+/g, " ").trim().slice(0, 60),
-      url: element.tagName === "A" ? element.href : ""
-    }));
+function classifyRecruitmentEntrance(label = "", url = "") {
+  const text = String(label).replace(/\s+/g, " ").trim();
+  const target = `${text} ${url}`;
+  if (!text || /(加入意向单|加入购物车|加入会员|加入社群|加入课程|加入收藏|加入对比|提交申请|立即投递|开始申请|apply now)/i.test(text)) return null;
+  if (/(校园招聘|校招职位|应届招聘|毕业生招聘|graduate jobs?|campus careers?)/i.test(target)) return { kind: "campus", audience: "campus", priority: 90 };
+  if (/(实习招聘|实习职位|实习生招聘|internship jobs?|intern careers?)/i.test(target)) return { kind: "intern", audience: "intern", priority: 95 };
+  if (/(社会招聘|社招职位|experienced hire|professional careers?)/i.test(target)) return { kind: "social", audience: "social", priority: 75 };
+  if (/(查看职位|搜索职位|职位搜索|浏览职位|全部职位|在招职位|热招职位|招聘职位|职位机会|日常实习生|view jobs?|search jobs?|open positions?|job openings?)/i.test(text)
+    || /\/(?:campus|social|intern(?:ship)?)\/jobs?(?:[/?#]|$)/i.test(url)) {
+    return { kind: "job_list", audience: /campus/i.test(target) ? "campus" : (/social/i.test(target) ? "social" : "general"), priority: 80 };
+  }
+  const joinLabel = /(?:加入我们|加入[\u4e00-\u9fa5A-Za-z0-9·]{1,12}|人才招聘|诚聘英才|招贤纳士|join us|join our team|work with us|careers?)/i.test(text);
+  const careerUrl = /(?:career|careers|jobs?|join|recruit|talent|campus|social|intern|zhaopin|zhiye)/i.test(url);
+  if (joinLabel && careerUrl) return { kind: "career_home", audience: "general", priority: 65 };
+  return null;
+}
+
+function recruitmentEntranceUrl(element) {
+  if (element.tagName !== "A") return "";
+  const raw = String(element.getAttribute("href") || "").trim();
+  if (!raw || /^(?:javascript:|mailto:|tel:)/i.test(raw)) return "";
+  try {
+    const parsed = new URL(raw, location.href);
+    return /^https?:$/i.test(parsed.protocol) ? parsed.href : "";
+  } catch { return ""; }
+}
+
+function discoverJobEntrances(profile = {}) {
+  const found = [];
+  const seen = new Set();
+  for (const element of document.querySelectorAll("a[href], button, [role='button']")) {
+    if (!isVisible(element)) continue;
+    const label = String(element.innerText || element.textContent || element.getAttribute("aria-label") || "").replace(/\s+/g, " ").trim().slice(0, 80);
+    const url = recruitmentEntranceUrl(element);
+    const classification = classifyRecruitmentEntrance(label, url);
+    if (!classification) continue;
+    const key = url ? canonicalPageUrl(url) : `${classification.kind}:${label.toLowerCase()}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const city = globalThis.ResumePilotCities?.analyze(label, profile.targetCity || "") || { status: "unknown", matched: [], foundCities: [] };
+    found.push({
+      index: found.length,
+      label: label || "职位入口",
+      url,
+      ...classification,
+      cityMatchStatus: city.status,
+      matchedCities: city.matched || [],
+      foundCities: city.foundCities || [],
+      platform: url ? (detectRecruitmentPlatform(url)?.name || "") : ""
+    });
+    if (found.length >= 20) break;
+  }
+  return found;
 }
 
 function clickJobEntrance(index) {

@@ -1,4 +1,4 @@
-# Resume Pilot v1.0 客户交付与验收指南
+# Resume Pilot v1.0.1 客户交付与验收指南
 
 ## 支持环境
 

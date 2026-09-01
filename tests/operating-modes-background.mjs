@@ -9,7 +9,7 @@ let nextTabId = 10;
 const context = {
   chrome: {
     runtime: {
-      getManifest: () => ({ version: "1.0.0" }),
+      getManifest: () => ({ version: "1.0.1" }),
       onMessage: { addListener() {} },
       onInstalled: { addListener() {} },
       onStartup: { addListener() {} }
@@ -86,5 +86,12 @@ const duplicate = vm.runInContext(`isPreviouslySubmitted(
   [{ company: "示例公司", job: "软件工程师", url: "https://jobs.lever.co/example/abc-123", status: "submitted" }]
 )`, context);
 assert.equal(duplicate, true);
+
+const selectedEntrance = vm.runInContext(`selectRecruitmentEntrance([
+  { label: "社会招聘", url: "https://example.zhiye.com/social", audience: "social", priority: 75, platform: "北森招聘", cityMatchStatus: "matched" },
+  { label: "校园招聘", url: "https://example.zhiye.com/campus", audience: "campus", priority: 90, platform: "北森招聘", cityMatchStatus: "unknown" },
+  { label: "深圳校招职位", url: "https://example.zhiye.com/campus/jobs?city=shenzhen", audience: "campus", priority: 80, platform: "北森招聘", cityMatchStatus: "mismatch" }
+], { positionType: "实习", targetCity: "上海" }, "https://www.example.com/join")`, context);
+assert.equal(selectedEntrance.label, "校园招聘");
 
 console.log("operating mode and deduplication tests passed");

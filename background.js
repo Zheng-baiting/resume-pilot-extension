@@ -437,6 +437,28 @@ function canonicalUrl(value) {
   }
 }
 
+function selectRecruitmentEntrance(entrances = [], profile = {}, currentUrl = "") {
+  const positionType = clean(profile.positionType).toLowerCase();
+  const wantsIntern = /实习|intern/.test(positionType);
+  const wantsCampus = /校园|校招|应届|graduate|campus/.test(positionType);
+  const wantsSocial = /社会|社招|全职|experienced|social/.test(positionType);
+  const ranked = (entrances || []).map((entry, order) => {
+    let score = Number(entry.priority || 0);
+    const audience = entry.audience || "general";
+    if (wantsIntern) score += audience === "intern" ? 100 : (audience === "campus" ? 70 : (audience === "social" ? -80 : 20));
+    else if (wantsCampus) score += audience === "campus" ? 100 : (audience === "social" ? -80 : 20);
+    else if (wantsSocial) score += audience === "social" ? 100 : (audience === "campus" || audience === "intern" ? -60 : 20);
+    if (entry.cityMatchStatus === "matched") score += 70;
+    else if (entry.cityMatchStatus === "flexible" || entry.cityMatchStatus === "unrestricted") score += 15;
+    else if (entry.cityMatchStatus === "mismatch") score -= 120;
+    if (entry.platform) score += 25;
+    if (entry.url && canonicalUrl(entry.url) !== canonicalUrl(currentUrl)) score += 15;
+    if (!entry.url) score -= 5;
+    return { entry, order, score };
+  }).sort((a, b) => b.score - a.score || a.order - b.order);
+  return ranked[0]?.entry || null;
+}
+
 function isLikelyCareerResult(item) {
   if (!item.url?.startsWith("http")) return false;
   const haystack = `${item.title} ${item.description} ${item.url}`.toLowerCase();
@@ -759,7 +781,7 @@ async function autoScanStage(tabId) {
     return;
   }
 
-  const entrance = (response.entrances || []).find((item) => item.url) || response.entrances?.[0];
+  const entrance = selectRecruitmentEntrance(response.entrances, roleProfile, response.sourceUrl || flow.url || "");
   if (!(response.results || []).length && entrance && autopilotState.navigationDepth < 2) {
     autopilotState.navigationDepth += 1;
     autopilotState.siteFlow = null;
@@ -1436,7 +1458,7 @@ async function handlePendingManualScan(tabId) {
     return;
   }
   if (!response.results?.length && response.entrances?.length && pendingManualScan.depth < 3) {
-    const entrance = response.entrances.find((item) => item.url) || response.entrances[0];
+    const entrance = selectRecruitmentEntrance(response.entrances, pendingManualScan.profile, response.sourceUrl || flow?.url || "");
     pendingManualScan.depth += 1;
     await chrome.storage.local.set({ pendingManualScan });
     if (entrance.url) {

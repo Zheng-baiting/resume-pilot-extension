@@ -9,7 +9,7 @@ const fetchedUrls = [];
 const context = {
   chrome: {
     runtime: {
-      getManifest: () => ({ version: "1.0.0" }),
+      getManifest: () => ({ version: "1.0.1" }),
       onMessage: { addListener() {} },
       onInstalled: { addListener() {} },
       onStartup: { addListener() {} }
