@@ -6,5 +6,7 @@ contextBridge.exposeInMainWorld("resumePilot", {
   importJobs: (jobs) => ipcRenderer.invoke("resume-pilot:import-jobs", jobs),
   buildQueue: (options) => ipcRenderer.invoke("resume-pilot:build-queue", options),
   nextJob: () => ipcRenderer.invoke("resume-pilot:next-job"),
-  reportResult: (result) => ipcRenderer.invoke("resume-pilot:report-result", result)
+  reportResult: (result) => ipcRenderer.invoke("resume-pilot:report-result", result),
+  installInfo: () => ipcRenderer.invoke("resume-pilot:install-info"),
+  openExtensionFolder: () => ipcRenderer.invoke("resume-pilot:open-extension-folder")
 });

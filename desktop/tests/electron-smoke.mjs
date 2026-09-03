@@ -5,7 +5,8 @@ import { fileURLToPath } from "node:url";
 const playwrightModule = process.env.PLAYWRIGHT_MODULE || "playwright";
 const { _electron } = await import(playwrightModule);
 const projectRoot = path.resolve(fileURLToPath(new URL("../../", import.meta.url)));
-const executablePath = path.join(projectRoot, "node_modules", "electron", "dist", "electron.exe");
+const executablePath = process.env.RESUME_PILOT_DESKTOP_EXE
+  || path.join(projectRoot, "node_modules", "electron", "dist", "electron.exe");
 const dataDirectory = path.join(projectRoot, "tmp", `electron-smoke-${process.pid}-${Date.now()}`);
 const screenshotPath = path.join(projectRoot, "tmp", "electron-smoke.png");
 
@@ -25,6 +26,7 @@ try {
   await window.getByRole("button", { name: "导入岗位" }).click();
   await window.getByText(/本地岗位库现有 2 条/).waitFor();
   assert.equal(await window.locator("#statJobs").textContent(), "2");
+  assert.equal(await window.locator("#extensionId").textContent(), "elpkjefgjcpichlgiecacdkgcohdpehf");
   await window.screenshot({ path: screenshotPath, fullPage: true });
   console.log("electron desktop smoke test passed");
 } finally {

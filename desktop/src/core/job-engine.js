@@ -1,6 +1,8 @@
+const crypto = require("node:crypto");
+// Keep these as static requires so Electron ASAR and the Node SEA native host
+// can bundle the shared scoring data instead of resolving a machine-specific path.
 require("../../../city-preferences.js");
 require("../../../scoring.js");
-const crypto = require("node:crypto");
 
 function clean(value = "") {
   return String(value).replace(/\s+/g, " ").trim();

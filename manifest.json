@@ -2,9 +2,9 @@
   "manifest_version": 3,
   "name": "简历领航 Resume Pilot",
   "version": "2.0.0",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAtkt5FlOfen3OUeuosf5BcqcV7LH0NzKyLbmIj9h4KKWElEVvKGReMSQeQuuOxLemq+0bb28oBxvT0srjxegi52XvKrlzYZDmXOixFmYQAKTJavLmURV0huMg+JHQneJyoOyU0mR8atZCgAKQvrXxtTsxxgemOJEXPxxIAEdhYi7uAsjCLOKMULgiRQpoEy+u5wDnbA6dqiGZXg+hU6bjpdTeoC/J0zvnI/gNwuuUyjl/i3grycVf1KXb0HmKZqnxJCs+sAx3wmdsYMrQCiku6cAgv9aOBXUSICIVQiGURa+z2pjdLZxgEc2MkevqdmhXYMnyC0K05LrX7k3vJUMgVwIDAQAB",
   "description": "混合桌面控制中心与浏览器执行器，在企业官网核验真实岗位、地点和流程后按授权辅助投递。",
-  "permissions": ["storage", "tabs", "activeTab", "alarms"],
-  "optional_permissions": ["nativeMessaging"],
+  "permissions": ["storage", "tabs", "activeTab", "alarms", "nativeMessaging"],
   "host_permissions": ["https://www.bing.com/*"],
   "background": {
     "service_worker": "background.js"

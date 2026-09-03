@@ -41,7 +41,8 @@ input:focus, select:focus, textarea:focus { border-color: #6f9cff; box-shadow: 0
 .queue-options { display: grid; grid-template-columns: repeat(3, 1fr) auto; align-items: end; gap: 11px; margin-top: 15px; padding-top: 15px; border-top: 1px solid #edf0f6; }
 .muted { margin: -6px 0 13px; color: var(--muted); font-size: 12px; line-height: 1.55; }
 .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 11px; }
-.queue-card { margin-top: 18px; }
+.queue-card, .install-card { margin-top: 18px; }
+.install-card > code { display: block; padding: 14px 16px; border-radius: 12px; background: #f3f6fb; color: #24436f; overflow-wrap: anywhere; }
 .notice { margin-bottom: 13px; padding: 11px 13px; border-radius: 10px; color: #315386; background: #edf4ff; font-size: 13px; }
 .notice.error { color: #9f2d2d; background: #fff0f0; }
 .table-wrap { overflow: auto; max-height: 410px; border: 1px solid var(--line); border-radius: 12px; }

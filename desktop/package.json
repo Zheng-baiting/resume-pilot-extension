@@ -5,10 +5,7 @@
   "description": "Resume Pilot desktop control center",
   "main": "src/main.js",
   "scripts": {
-    "dev": "electron .",
-    "start": "electron ."
-  },
-  "devDependencies": {
-    "electron": "44.1.0"
+    "dev": "electron ..",
+    "start": "electron .."
   }
 }

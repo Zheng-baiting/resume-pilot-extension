@@ -5,6 +5,7 @@ node_modules/
 dist/
 desktop/dist/
 desktop/out/
+desktop/build/resume-pilot-native-host.exe
 .dev-data/
 .DS_Store
 Thumbs.db

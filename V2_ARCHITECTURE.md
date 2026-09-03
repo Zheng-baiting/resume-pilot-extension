@@ -27,7 +27,7 @@ v2 不用桌面软件替代浏览器，而是把适合长期运行和批量计�
 - 使用 Chrome Native Messaging 的长度前缀 JSON 协议。
 - 协议主机名：`com.resume_pilot.desktop`。
 - 扩展仅同步岗位元数据和求职偏好，不同步身份资料或简历附件。
-- Native Messaging 权限按用户操作请求，不作为插件安装时的必需权限。
+- 安装版把 Native Messaging 作为必需权限；只有固定扩展 ID 能访问当前用户注册的本地主机。
 
 ## 限速策略
 

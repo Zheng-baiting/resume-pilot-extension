@@ -77,8 +77,8 @@ function renderDesktopStatus(status = {}) {
 async function connectDesktop() {
   const node = document.getElementById("desktopStatus");
   try {
-    const granted = await chrome.permissions.request({ permissions: ["nativeMessaging"] });
-    if (!granted) throw new Error("未授权与本地桌面程序通信");
+    const granted = await chrome.permissions.contains({ permissions: ["nativeMessaging"] });
+    if (!granted) throw new Error("扩展没有本地通信权限，请重新加载 v2 扩展");
     node.className = "status";
     node.textContent = "正在连接桌面控制中心…";
     const response = await chrome.runtime.sendMessage({ type: "DESKTOP_CONNECT" });

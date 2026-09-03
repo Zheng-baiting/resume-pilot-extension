@@ -3,13 +3,71 @@
   "version": "2.0.0-alpha.1",
   "private": true,
   "description": "Resume Pilot hybrid desktop and browser automation workspace",
+  "author": "Resume Pilot Contributors",
+  "main": "desktop/src/main.js",
   "workspaces": [
     "desktop"
   ],
   "scripts": {
-    "desktop:dev": "npm --workspace desktop run dev",
+    "desktop:dev": "electron .",
+    "native-host:build": "node desktop/scripts/build-native-host.js",
+    "desktop:pack": "npm run native-host:build && electron-builder --dir --win",
+    "desktop:dist": "npm run native-host:build && electron-builder --win nsis",
     "test:desktop": "node --test desktop/tests/*.test.js",
     "test": "npm run test:desktop"
+  },
+  "devDependencies": {
+    "electron": "44.1.0",
+    "electron-builder": "26.15.3",
+    "esbuild": "0.28.2",
+    "postject": "1.0.0-alpha.6"
+  },
+  "build": {
+    "appId": "io.github.zheng-baiting.resume-pilot",
+    "productName": "Resume Pilot",
+    "asar": true,
+    "directories": {
+      "output": "desktop/dist",
+      "buildResources": "desktop/build"
+    },
+    "files": [
+      "package.json",
+      "desktop/src/**/*",
+      "shared/**/*",
+      "city-preferences.js",
+      "scoring.js"
+    ],
+    "extraResources": [
+      { "from": "desktop/build/native-host-manifest.json", "to": "native-host-manifest.json" },
+      { "from": "desktop/build/resume-pilot-native-host.exe", "to": "resume-pilot-native-host.exe" },
+      { "from": "manifest.json", "to": "extension/manifest.json" },
+      { "from": "background.js", "to": "extension/background.js" },
+      { "from": "city-preferences.js", "to": "extension/city-preferences.js" },
+      { "from": "content.css", "to": "extension/content.css" },
+      { "from": "content.js", "to": "extension/content.js" },
+      { "from": "main-click.js", "to": "extension/main-click.js" },
+      { "from": "popup.css", "to": "extension/popup.css" },
+      { "from": "popup.html", "to": "extension/popup.html" },
+      { "from": "popup.js", "to": "extension/popup.js" },
+      { "from": "resume-import.js", "to": "extension/resume-import.js" },
+      { "from": "scoring.js", "to": "extension/scoring.js" },
+      { "from": "shared", "to": "extension/shared" },
+      { "from": "vendor", "to": "extension/vendor" }
+    ],
+    "win": {
+      "target": ["nsis"]
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "allowElevation": false,
+      "runAfterFinish": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "artifactName": "resume-pilot-desktop-${version}-setup.${ext}",
+      "include": "desktop/build/installer.nsh",
+      "deleteAppDataOnUninstall": false
+    }
   },
   "engines": {
     "node": ">=22"

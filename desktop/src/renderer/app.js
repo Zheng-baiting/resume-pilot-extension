@@ -84,4 +84,12 @@ byId("claimNext").addEventListener("click", async () => {
 });
 
 byId("refresh").addEventListener("click", refresh);
-refresh().catch((error) => notice(error.message, true));
+byId("openExtensionFolder").addEventListener("click", async () => {
+  const error = await window.resumePilot.openExtensionFolder();
+  if (error) notice(`无法打开扩展目录：${error}`, true);
+});
+
+Promise.all([refresh(), window.resumePilot.installInfo()]).then(([, info]) => {
+  byId("extensionDirectory").textContent = info.extensionDirectory;
+  byId("extensionId").textContent = info.extensionId;
+}).catch((error) => notice(error.message, true));

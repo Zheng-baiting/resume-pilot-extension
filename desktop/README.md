@@ -27,7 +27,7 @@ npm run desktop:dev
 ## 安全说明
 
 - 插件同步前会剔除姓名、电话、邮箱、学校、简历正文、附件和已记住答案。
-- Native Messaging 权限为可选权限，只有用户点击“授权并连接”才会请求。
+- v2 安装版将 Native Messaging 作为桌面通信所需权限；本地主机仍通过固定扩展 ID 白名单限制访问。
 - 当前仓库不会自动安装本地通信组件，也不会修改注册表。
 - `native-host/manifest.template.json` 中的主机路径和扩展 ID 必须由未来的安装程序填写。
 

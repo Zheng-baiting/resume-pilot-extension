@@ -132,11 +132,24 @@ class ResumePilotService {
     };
   }
 
+  async bridgeSnapshot() {
+    const snapshot = await this.snapshot();
+    return {
+      profile: snapshot.profile,
+      settings: snapshot.settings,
+      stats: snapshot.stats,
+      queue: snapshot.queue.slice(0, 20).map(({ id, jobId, company, title, url, status, attempts, retryAt }) => ({
+        id, jobId, company, title, url, status, attempts, retryAt
+      }))
+    };
+  }
+
   async handleBridgeMessage(message) {
     const request = Bridge.validateRequest(message);
     try {
       let payload;
-      if (request.type === Bridge.TYPES.HELLO || request.type === Bridge.TYPES.GET_SNAPSHOT) payload = await this.snapshot();
+      if (request.type === Bridge.TYPES.HELLO) payload = await this.bridgeSnapshot();
+      else if (request.type === Bridge.TYPES.GET_SNAPSHOT) payload = await this.snapshot();
       else if (request.type === Bridge.TYPES.SYNC_PROFILE) payload = await this.saveProfile(request.payload?.profile || {});
       else if (request.type === Bridge.TYPES.IMPORT_JOBS) payload = await this.importJobs(request.payload?.jobs || []);
       else if (request.type === Bridge.TYPES.BUILD_QUEUE) payload = await this.rebuildQueue(request.payload || {});
