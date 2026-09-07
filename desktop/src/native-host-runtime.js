@@ -47,14 +47,15 @@ function startNativeHost(dataDirectory = defaultDataDirectory()) {
     }
   }
 
-  service.init().then(() => {
-    process.stdin.on("data", (chunk) => {
+  service.init().then(async () => {
+    for await (const chunk of process.stdin) {
       buffer = Buffer.concat([buffer, chunk]);
-      consume().catch((error) => process.stderr.write(`${error.stack || error}\n`));
-    });
-    process.stdin.resume();
+      await consume();
+    }
+    if (buffer.length) throw new Error("本地通信消息未接收完整");
   }).catch((error) => {
     process.stderr.write(`${error.stack || error}\n`);
+    process.stdin.destroy();
     process.exitCode = 1;
   });
 }

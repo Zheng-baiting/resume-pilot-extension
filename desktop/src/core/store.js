@@ -1,5 +1,6 @@
 const fs = require("node:fs/promises");
 const path = require("node:path");
+const { randomUUID } = require("node:crypto");
 
 const COLLECTIONS = new Set(["profile", "jobs", "queue", "events", "settings"]);
 
@@ -31,11 +32,16 @@ class JsonStore {
   async write(name, value) {
     await this.init();
     const target = this.file(name);
-    const temporary = `${target}.${process.pid}.${Date.now()}.tmp`;
-    this.writeChain = this.writeChain.then(async () => {
-      await fs.writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, "utf8");
-      await fs.rm(target, { force: true });
-      await fs.rename(temporary, target);
+    const temporary = `${target}.${process.pid}.${randomUUID()}.tmp`;
+    const contents = `${JSON.stringify(value, null, 2)}\n`;
+    this.writeChain = this.writeChain.catch(() => {}).then(async () => {
+      try {
+        await fs.writeFile(temporary, contents, "utf8");
+        // Replace in one operation: readers must never observe a missing target.
+        await fs.rename(temporary, target);
+      } finally {
+        await fs.rm(temporary, { force: true }).catch(() => {});
+      }
     });
     return this.writeChain;
   }

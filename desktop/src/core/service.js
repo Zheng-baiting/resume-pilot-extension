@@ -1,5 +1,5 @@
 const { JsonStore } = require("./store.js");
-const { normalizeJob, rankJobs, buildQueue } = require("./job-engine.js");
+const { normalizeJob, rankJobs, buildQueue, normalizeQueueOptions, fingerprintJob } = require("./job-engine.js");
 const { DomainRateLimiter } = require("./rate-limiter.js");
 const Bridge = require("../../../shared/bridge-protocol.js");
 
@@ -9,7 +9,7 @@ function publicProfile(input = {}) {
     "minJobFit", "minDailySalary", "minMonthlySalary", "avoidJobKeywords",
     "avoidCompanyKeywords", "maxExperienceYears", "availableDays", "internshipMonths"
   ];
-  return Object.fromEntries(allowed.map((key) => [key, typeof input[key] === "boolean" ? input[key] : String(input[key] || "")]).filter(([, value]) => value !== ""));
+  return Object.fromEntries(allowed.map((key) => [key, typeof input[key] === "boolean" ? input[key] : String(input[key] ?? "")]).filter(([, value]) => value !== ""));
 }
 
 class ResumePilotService {
@@ -20,10 +20,8 @@ class ResumePilotService {
 
   async init() {
     await this.store.init();
-    for (const [name, fallback] of [["profile", {}], ["jobs", []], ["queue", []], ["events", []], ["settings", { queueLimit: 20, perCompany: 3, minimumScore: 40 }]]) {
-      const value = await this.store.read(name, fallback);
-      await this.store.write(name, value);
-    }
+    // Missing collections already have read fallbacks. Starting another host
+    // must not rewrite a snapshot over changes made by the desktop process.
     return this.snapshot();
   }
 
@@ -34,7 +32,7 @@ class ResumePilotService {
   }
 
   async saveProfile(profile) {
-    const sanitized = publicProfile(profile);
+    const sanitized = publicProfile({ ...(await this.store.read("profile", {})), ...profile });
     await this.store.write("profile", sanitized);
     await this.appendEvent("profile_updated", { fields: Object.keys(sanitized) });
     return sanitized;
@@ -61,11 +59,15 @@ class ResumePilotService {
   }
 
   async rebuildQueue(options = {}) {
-    const settings = { ...(await this.store.read("settings", {})), ...options };
-    settings.limit = Number(settings.limit || settings.queueLimit || 20);
-    settings.queueLimit = settings.limit;
+    const previousSettings = await this.store.read("settings", {});
+    const settings = normalizeQueueOptions({ ...previousSettings, ...options, limit: options.limit ?? options.queueLimit ?? previousSettings.queueLimit });
     await this.store.write("settings", settings);
-    const queue = buildQueue(await this.rankedJobs(), settings);
+    const previous = await this.store.read("queue", []);
+    // Keep submitted, uncertain, active and retry states. Rebuilding is not
+    // permission to replay an application or forget a site's cooldown.
+    const retained = previous.filter((item) => item.status !== "queued");
+    const retainedIds = new Set(retained.map((item) => item.id));
+    const queue = [...retained, ...buildQueue((await this.rankedJobs()).filter((job) => !retainedIds.has(fingerprintJob(job))), settings, retained)];
     await this.store.write("queue", queue);
     await this.appendEvent("queue_rebuilt", { queued: queue.length, settings });
     return queue;
@@ -73,9 +75,20 @@ class ResumePilotService {
 
   async claimNextJob() {
     const queue = await this.store.read("queue", []);
+    const ranked = new Map((await this.rankedJobs()).map((job) => [job.id, job]));
     let shortestWait = Number.POSITIVE_INFINITY;
     for (const item of queue) {
       if (item.status !== "queued" && item.status !== "retry") continue;
+      const job = ranked.get(item.jobId);
+      if (!job || job.hardBlocked) continue;
+      const host = this.limiter.hostFor(item.url);
+      const siblings = queue.filter((entry) => this.limiter.hostFor(entry.url) === host);
+      if (siblings.some((entry) => entry.status === "processing")) continue;
+      const retryAt = Math.max(0, ...siblings.map((entry) => Number(entry.retryAt) || 0));
+      if (retryAt > Date.now()) {
+        shortestWait = Math.min(shortestWait, retryAt - Date.now());
+        continue;
+      }
       const availability = this.limiter.claim(item.url);
       if (!availability.allowed) {
         shortestWait = Math.min(shortestWait, availability.waitMs);
@@ -95,10 +108,11 @@ class ResumePilotService {
     const queue = await this.store.read("queue", []);
     const item = queue.find((entry) => entry.id === result.queueId);
     if (!item) throw new Error("找不到对应的投递队列项");
+    if (item.status !== "processing") throw new Error("岗位不在处理中，请刷新状态后重试");
     const rate = this.limiter.complete(item.url, result);
+    item.retryAt = rate.retryAt;
     if (rate.rateLimited) {
       item.status = "retry";
-      item.retryAt = rate.retryAt;
       item.lastError = "HTTP 429：官网限流，已自动退避";
     } else {
       const allowed = new Set(["dry_run_ready", "ready_for_review", "submitted", "submitted_unverified", "skipped", "failed"]);

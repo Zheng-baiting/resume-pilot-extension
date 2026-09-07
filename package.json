@@ -14,7 +14,8 @@
     "desktop:pack": "npm run native-host:build && electron-builder --dir --win",
     "desktop:dist": "npm run native-host:build && electron-builder --win nsis",
     "test:desktop": "node --test desktop/tests/*.test.js",
-    "test": "npm run test:desktop"
+    "test:extension": "node tests/city-preferences.mjs && node tests/discovery-and-compensation.mjs && node tests/company-diversity-background.mjs && node tests/desktop-bridge-background.mjs && node tests/operating-modes-background.mjs && node tests/resume-profile-parser.mjs",
+    "test": "npm run test:desktop && npm run test:extension"
   },
   "devDependencies": {
     "electron": "44.1.0",

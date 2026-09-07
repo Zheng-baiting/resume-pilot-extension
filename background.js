@@ -70,15 +70,14 @@ async function syncBrowserStateToDesktop() {
     "maxExperienceYears", "availableDays", "internshipMonths"
   ];
   const safeProfile = Object.fromEntries(safeProfileFields
-    .filter((key) => data.profile?.[key] !== undefined && data.profile?.[key] !== "")
-    .map((key) => [key, data.profile[key]]));
+    .map((key) => [key, data.profile?.[key] ?? ""]));
   await sendDesktopBridge(ResumePilotBridge.TYPES.SYNC_PROFILE, { profile: safeProfile });
   const candidates = [
     ...(data.latestManualScan?.results || []),
     ...(data.latestCompanyCandidates?.results || []),
     ...(data.jobWatchState?.candidates || [])
   ];
-  const jobs = [...new Map(candidates.filter((item) => item?.url).map((item) => [`${canonicalUrl(item.url)}|${clean(item.title)}`, {
+  const jobs = [...new Map(candidates.filter((item) => item?.url).map((item) => [`${item.url}|${clean(item.title)}`, {
     id: item.id || "",
     company: item.company || item.companyHint || "",
     title: item.title || item.job || "",

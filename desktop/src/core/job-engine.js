@@ -11,10 +11,10 @@ function clean(value = "") {
 function canonicalUrl(value = "") {
   try {
     const parsed = new URL(value);
-    parsed.hash = "";
+    if (!["https:", "http:"].includes(parsed.protocol) || parsed.username || parsed.password) return "";
     ["utm_source", "utm_medium", "utm_campaign", "from", "source"].forEach((key) => parsed.searchParams.delete(key));
     return parsed.href.replace(/\/$/, "");
-  } catch { return clean(value); }
+  } catch { return ""; }
 }
 
 function fingerprintJob(job = {}) {
@@ -75,11 +75,13 @@ function rankJobs(jobs = [], profile = {}) {
   });
 }
 
-function buildQueue(rankedJobs = [], options = {}) {
-  const limit = Math.max(1, Math.min(200, Number(options.limit || 20)));
-  const perCompany = Math.max(1, Math.min(20, Number(options.perCompany || 3)));
-  const minimumScore = Number(options.minimumScore || 40);
+function buildQueue(rankedJobs = [], options = {}, previous = []) {
+  const { limit, perCompany, minimumScore } = normalizeQueueOptions(options);
   const counts = new Map();
+  for (const item of previous) {
+    const key = clean(item.company).toLowerCase();
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
   const seen = new Set();
   const queue = [];
   for (const job of rankedJobs) {
@@ -107,4 +109,13 @@ function buildQueue(rankedJobs = [], options = {}) {
   return queue;
 }
 
-module.exports = { canonicalUrl, fingerprintJob, normalizeJob, isExpired, rankJob, rankJobs, buildQueue };
+function normalizeQueueOptions(options = {}) {
+  const number = (value, fallback, min, max) => {
+    const parsed = value === "" || value == null ? fallback : Number(value);
+    return Number.isFinite(parsed) ? Math.max(min, Math.min(max, Math.floor(parsed))) : fallback;
+  };
+  const limit = number(options.limit ?? options.queueLimit, 20, 1, 200);
+  return { limit, queueLimit: limit, perCompany: number(options.perCompany, 3, 1, 20), minimumScore: number(options.minimumScore, 40, 0, 100) };
+}
+
+module.exports = { canonicalUrl, fingerprintJob, normalizeJob, isExpired, rankJob, rankJobs, buildQueue, normalizeQueueOptions };

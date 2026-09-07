@@ -19,7 +19,11 @@ const storage = {
     skills: "JavaScript"
   },
   latestManualScan: {
-    results: [{ company: "示例公司", title: "前端实习生", url: "https://careers.example.com/jobs/1", location: "上海", description: "JavaScript React" }]
+    results: [
+      { company: "示例公司", title: "前端实习生", url: "https://careers.example.com/jobs/1", location: "上海", description: "JavaScript React" },
+      ...[1, 2].map((id) => ({ company: "示例公司", title: "前端实习生", url: `https://careers.example.com/#/details?id=${id}` })),
+      ...[1, 2].map((id) => ({ company: "示例公司", title: "前端实习生", url: `https://careers.example.com/details?id=${id}` }))
+    ]
   }
 };
 
@@ -65,6 +69,7 @@ assert.equal("fullName" in profileRequest.payload.profile, false);
 assert.equal("phone" in profileRequest.payload.profile, false);
 assert.equal("email" in profileRequest.payload.profile, false);
 assert.equal("resumeText" in profileRequest.payload.profile, false);
-assert.equal(jobsRequest.payload.jobs.length, 1);
+assert.equal(profileRequest.payload.profile.minMonthlySalary, "", "clearing browser filters must clear stale desktop values");
+assert.equal(jobsRequest.payload.jobs.length, 5);
 assert.equal(jobsRequest.payload.jobs[0].company, "示例公司");
 console.log("desktop bridge privacy and sync tests passed");

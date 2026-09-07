@@ -42,7 +42,7 @@ function escapeHtml(value = "") {
 byId("saveProfile").addEventListener("click", async () => {
   try {
     await window.resumePilot.saveProfile(Object.fromEntries(fields.map((field) => [field, byId(field).value])));
-    notice("求职条件已保存在本机。浏览器插件接通后会同步使用这些条件。");
+    notice("条件已保存在桌面端。官网投递使用扩展中的资料，请保持两端条件一致；扩展同步会覆盖同名桌面条件。");
     await refresh();
   } catch (error) { notice(error.message, true); }
 });
@@ -70,20 +70,20 @@ byId("buildQueue").addEventListener("click", async () => {
       queueLimit: Number(byId("queueLimit").value),
       perCompany: Number(byId("perCompany").value)
     });
-    notice(`已按城市、技能、求职类型和每家上限生成 ${queue.length} 个待核验岗位。`);
+    notice(`队列中有 ${queue.filter((item) => item.status === "queued").length} 个待核验岗位；已处理记录、处理中任务和限流等待均已保留。`);
     await refresh();
   } catch (error) { notice(error.message, true); }
 });
 
 byId("claimNext").addEventListener("click", async () => {
   try {
-    const result = await window.resumePilot.nextJob();
-    notice(result.job ? `下一岗位：${result.job.company} · ${result.job.title}。等待浏览器执行器接管。` : (result.waitMs ? `官网正在限速退避，约 ${Math.ceil(result.waitMs / 1000)} 秒后再试。` : "当前没有可领取的岗位。"));
     await refresh();
+    const job = snapshot.queue.find((item) => ["queued", "retry"].includes(item.status));
+    notice(job ? `待核验：${job.company} · ${job.title}。这是队列预览，不会启动投递；请在扩展中选择官网并试运行。` : "当前没有待核验的岗位。");
   } catch (error) { notice(error.message, true); }
 });
 
-byId("refresh").addEventListener("click", refresh);
+byId("refresh").addEventListener("click", () => refresh().catch((error) => notice(error.message, true)));
 byId("openExtensionFolder").addEventListener("click", async () => {
   const error = await window.resumePilot.openExtensionFolder();
   if (error) notice(`无法打开扩展目录：${error}`, true);
