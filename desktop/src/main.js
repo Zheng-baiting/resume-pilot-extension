@@ -60,6 +60,7 @@ function startDesktopApp() {
       ipcMain.handle("resume-pilot:next-job", () => service.claimNextJob());
       ipcMain.handle("resume-pilot:report-result", (_event, result) => service.reportResult(result));
       ipcMain.handle("resume-pilot:install-info", () => ({
+        version: app.getVersion(),
         extensionId: "elpkjefgjcpichlgiecacdkgcohdpehf",
         extensionDirectory: extensionDirectory(),
         packaged: app.isPackaged

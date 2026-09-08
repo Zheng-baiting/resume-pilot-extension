@@ -90,6 +90,7 @@ byId("openExtensionFolder").addEventListener("click", async () => {
 });
 
 Promise.all([refresh(), window.resumePilot.installInfo()]).then(([, info]) => {
+  byId("desktopVersion").textContent = `RESUME PILOT ${info.version}`;
   byId("extensionDirectory").textContent = info.extensionDirectory;
   byId("extensionId").textContent = info.extensionId;
 }).catch((error) => notice(error.message, true));

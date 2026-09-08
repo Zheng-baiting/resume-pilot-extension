@@ -1,8 +1,14 @@
 const crypto = require("node:crypto");
-// Keep these as static requires so Electron ASAR and the Node SEA native host
-// can bundle the shared scoring data instead of resolving a machine-specific path.
-require("../../../city-preferences.js");
-require("../../../scoring.js");
+if (process.versions.electron && !process.defaultApp) {
+  // Installed builds share these files with the packaged browser extension.
+  const path = require("node:path");
+  require(path.join(process.resourcesPath, "extension", "city-preferences.js"));
+  require(path.join(process.resourcesPath, "extension", "scoring.js"));
+} else {
+  // Static imports are required for bundling the standalone Node SEA host.
+  require("../../../city-preferences.js");
+  require("../../../scoring.js");
+}
 
 function clean(value = "") {
   return String(value).replace(/\s+/g, " ").trim();
